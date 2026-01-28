@@ -1,0 +1,131 @@
+Sure — here’s the clean, minimal path to make “To Printer” actually map into your ViewModel → Request → Options → ComposeLayoutAsync.
+
+I’ll show a “use what you already have” approach first (bool properties), since it’s fastest and avoids converters.
+
+Step 1) Add two bindable bool properties to BmMapLayoutVM
+
+In BmMapLayoutVM.cs, you already have backing fields like _pipelineToLayout / _pipelineToPrinter (from earlier). If you do, expose them like this:
+
+private bool _pipelineToLayout = true;   // default
+private bool _pipelineToPrinter = false; // default
+
+public bool PipelineToLayout
+{
+    get => _pipelineToLayout;
+    set
+    {
+        if (_pipelineToLayout == value) return;
+        _pipelineToLayout = value;
+
+        if (value) _pipelineToPrinter = false; // mutual exclusivity
+
+        OnPropertyChanged(nameof(PipelineToLayout));
+        OnPropertyChanged(nameof(PipelineToPrinter));
+    }
+}
+
+public bool PipelineToPrinter
+{
+    get => _pipelineToPrinter;
+    set
+    {
+        if (_pipelineToPrinter == value) return;
+        _pipelineToPrinter = value;
+
+        if (value) _pipelineToLayout = false;
+
+        OnPropertyChanged(nameof(PipelineToPrinter));
+        OnPropertyChanged(nameof(PipelineToLayout));
+    }
+}
+
+
+✅ Now the VM has a real place to store the choice.
+
+Step 2) Bind the radio buttons’ IsChecked to those properties
+
+Update your XAML for both radio buttons.
+
+“On Layout”
+<RadioButton x:Name="radioLayout"
+             GroupName="PipelineOutput"
+             IsEnabled="{Binding PipelineLayerCheck}"
+             IsChecked="{Binding PipelineToLayout, Mode=TwoWay}"
+             Content="On Layout"
+             HorizontalAlignment="Left"
+             Margin="366,500,0,0"
+             VerticalAlignment="Top" />
+
+“To Printer”
+<RadioButton x:Name="radioPrinter"
+             GroupName="PipelineOutput"
+             IsEnabled="{Binding PipelineLayerCheck}"
+             IsChecked="{Binding PipelineToPrinter, Mode=TwoWay}"
+             Content="To Printer"
+             HorizontalAlignment="Left"
+             Margin="366,525,0,0"
+             VerticalAlignment="Top" />
+
+
+Key additions:
+
+GroupName="PipelineOutput" ensures mutual exclusivity in the UI
+
+IsChecked="{Binding ... Mode=TwoWay}" actually maps the choice
+
+Step 3) Add the choice to LayoutRequest
+
+In LayoutRequest.cs, add:
+
+public bool PipelineToPrinter { get; set; }
+
+
+(You can keep it simple as a boolean for now.)
+
+Step 4) Populate LayoutRequest from the VM
+
+Wherever you currently build the request (often ToLayoutRequest()), add:
+
+PipelineToPrinter = this.PipelineToPrinter
+
+Step 5) Carry it into LayoutBuildOptions
+
+In LayoutBuildOptions.cs, add:
+
+public bool PipelineToPrinter { get; set; }
+
+
+Then in FromLayoutRequest(...):
+
+PipelineToPrinter = request.PipelineToPrinter
+
+Step 6) Use it in ComposeLayoutAsync
+
+Now you can reliably branch:
+
+if (options.PipelineToPrinter)
+{
+    // export selected/all
+    // set SkipPipelineTableFromUserChoice = true
+    // SelectedPipelineCount = 0
+    // call PipelineTablePrintService (or set outcome flag to print in UI layer)
+}
+
+
+(We’ll implement this branch next.)
+
+Step 7) Quick test
+
+Run Pro add-in
+
+Ensure pipeline layer check enables the radio buttons
+
+Click “To Printer”
+
+Put a breakpoint where you build the LayoutRequest and verify:
+
+PipelineToPrinter == true
+
+Put a breakpoint in ComposeLayoutAsync and verify:
+
+options.PipelineToPrinter == true
