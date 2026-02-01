@@ -31,13 +31,12 @@ namespace BasemappingPro.ui.maplayout
                 var map = mv?.Map;
                 if (map == null) return null;
 
-                // Assume only one layer (as requested). If none, fallback to map SR.
+                // Assume only one layer. If none, fallback to map SR.
                 var layer = map.GetLayersAsFlattenedList().FirstOrDefault();
 
                 SpatialReference? sr = null;
                 try
-                {
-                    // Some layer types expose SR; fallback to map SR always works.
+                {.
                     sr = layer?.GetSpatialReference() ?? map.SpatialReference;
                 }
                 catch
