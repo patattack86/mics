@@ -1,345 +1,1510 @@
-private async Task<SizeScaleResult> ComputeSizeScaleAsync(RecalcOrigin origin, int layoutFormat, CancellationToken ct)
+using ArcGIS.Core.CIM;
+using ArcGIS.Core.Geometry;
+using ArcGIS.Desktop.Core;
+using ArcGIS.Desktop.Framework.Threading.Tasks;
+using ArcGIS.Desktop.Layouts;
+using ArcGIS.Desktop.Mapping;
+using BasemappingPro.maplayouts;
+using System;
+using System.ComponentModel;
+using System.IO;
+using System.Linq;
+using System.Threading.Tasks;
+using System.Windows;
+using System.Windows.Media.Imaging;
+using HorizontalAlignment = ArcGIS.Core.CIM.HorizontalAlignment;
+
+namespace BasemappingPro.ui.maplayout
 {
-    // Snapshot
-    double inputX = _pageSizeX;
-    double inputY = _pageSizeY;
-    double inputMapScale = _mapScale;
-    double inputRelScale = _relScale;
+    /// <summary>
+    /// Get the positioning calculations from BmMapLayoutVM
+    /// </summary>
+    /// 
+    //public BmMapLayoutVM layoutVM = new BmMapLayoutVM();
+    //public class LayoutComposer
+    //{
 
-    double margin = marginSz;
-    double gap = gapSz;
-    double legendPercent = legendAreaPercent;
-    double logoHeightBase = MapLayoutConstants.logoHeight;
-
-    // IMPORTANT: remove ct from QueuedTask.Run call; still check ct inside
-    return await QueuedTask.Run(() =>
+    //}
+    /// <summary>
+    /// Main orchestrator for composing layouts with all components.
+    /// Integrates map frame, overview, pipeline table, and other layout elements.
+    /// </summary>
+    public static class LayoutComposer
     {
-        ct.ThrowIfCancellationRequested();
+        /// <summary>
+        /// Default margin size in inches.
+        /// </summary>
+        private static double DefaultMargin = 0.5;
+        // 1 means a layout with seal
+        // 2 means a layout with logo
+        // 3 means a map only layout
+        private static int layoutSelected = 1;
 
-        var mv = MapView.Active;
-        if (mv?.Map == null || mv.Extent == null)
-            return new SizeScaleResult(inputX, inputY, inputMapScale, inputRelScale);
+        // to prevent keep calling functions, when new page size
+        // is calculated, we save the result into these local
+        // variables, see create() function
+        private static double pageSizeX = 0.0;
+        private static double pageSizeY = 0.0;
+        private static double legendX = 0.0;
+        //for pipeline table
+        private static double pipelineTitleWidth = 0.0;
+        private static double pipelineTitleHeight = 0.0;
+        private static double tableArea = 0.0;
+        private static double totalTableArea = 0.0;
 
-        var map = mv.Map;
 
-        // --- Determine "feet" like you currently do (kept as-is) ---
-        var srUnitLinear = map.SpatialReference?.Unit as LinearUnit;
-        bool feet = srUnitLinear != null &&
-                    (srUnitLinear.Name == "Foot_US" || Math.Abs(srUnitLinear.MetersPerUnit - 0.305) < 1e-6);
+        // these variables are adjusted local copies of the constants 
+        // defined in MapLayoutHeader file
+        // legend area size
+        private static double legendAreaPercent = MapLayoutConstants.legendAreaPercent;
+        private static double legendAreaOffset = MapLayoutConstants.legendAreaOffset;
+        // distance between second neat line to map frame and legend area
+        private static double marginSz = MapLayoutConstants.marginSz;
+        // distance from legend area to items (top=bottom=right=left)
+        private static double gapSz = MapLayoutConstants.gapSz;
+        // to adjust for the logo area on the page layout
+        private static double logoMarginSz = MapLayoutConstants.logoHeight;
 
-        double mapWidth = mv.Extent.Width;
-        double mapHeight = mv.Extent.Height;
-        if (mapWidth <= 0 || mapHeight <= 0)
-            return new SizeScaleResult(inputX, inputY, inputMapScale, inputRelScale);
+        // holds the font/text sizes in points - base line 11x8.5 page size
+        private static double titleSize = 12.0;
+        private static double textScaleSize = 6.0;
+        private static double commentSize = 6.0;
+        private static double tableTextSize = 0.0;
+        private static double timeSize = 4.0;
+        private static double gridTextSize = 5.0;
+        private static double logoTextSize = 12.0;
+        private static double disclaimerSize = 6.0;
+        private static double projectionSize = 6.0;
+        private static double scalebarDivLabelSize = 5.3;
+        /// <summary>
+        /// Legend area percentage of page width.
+        /// </summary>
+        ///         
+        // these are to control area of each element
+        private static double LHEIGHT = 0.0;
+        private static double logoTextPercent = 5.0 / 100.0;
+        private static double logoPercent = 6.0 / 100.0;
+        private static double LegendAreaPercent = 40.0 / 100.0; //0.20;
+        private static double TitlePercent = 5.0 / 100.0;
+        // including the height of bar and the text
+        private static double scalebarPercent = 3.0 / 100.0;
+        private static double scaletextPercent = 1.0 / 100.0;
+        private static double disclaimerPercent = 7.0 / 100.0;
+        private static double commentPercent = 3.0 / 100.0;
+        private static double projectionPercent = 3.0 / 100.0;
+        private static double overviewPercent = 10.0 / 100.0;
+        // keeps track of available space in legend area
+        private static double spaceRemains = 0.0;
+        private static double spaceRemainsYMin = 0.0;
+        private static double spaceRemainsYMax = 0.0;
 
-        double pageX = inputX;
-        double pageY = inputY;
-        double mapScale = inputMapScale;
-        double relScale = inputRelScale;
-        double legendXLocal = 0.0;
-        double logoMarginLocal = logoHeightBase;
 
-        double workingMargin = MapLayoutConstants.marginSz;
-        double workingGap = MapLayoutConstants.gapSz;
-        double workingLegendPercent = MapLayoutConstants.legendAreaPercent;
+        private enum Bureau { BOEM, BSEE }
+        private enum LogoPlacement { None, TopLeft, InLegendPanel }
+        private enum GraphicKind { None, Logo, Seal }
 
-        // Ground width/height in current SR units (kept names)
-        double groundWidth = mv.Extent.Width;
-        double groundHeight = mv.Extent.Height;
-        if (groundWidth <= 0 || groundHeight <= 0)
-            return new SizeScaleResult(inputX, inputY, inputMapScale, inputRelScale);
+        private sealed record LogoSelection(
+            Bureau? Bureau,
+            LogoPlacement Placement,
+            GraphicKind Kind,
+            string? FileName // e.g. "BOEM Logo.jpg"
+        );
 
-        // ---------------- FIXED UNIT PIPELINE ----------------
-        // FactoryCode (e.g., 9001, 9002, 9003, 9102) drives page unit choice and getESRIUnit2Str logic
-        int mapUnitFc = map.SpatialReference?.Unit?.FactoryCode ?? 0;
-
-        // UnitTypeCode drives DistanceConversion and SrUnitByRegion
-        int unitTypeCode;
-        var srUnit = map.SpatialReference?.Unit;
-
-        if (srUnit is AngularUnit)
-            unitTypeCode = (int)UnitTypeCode.Degrees;
-        else if (srUnit is LinearUnit lu)
-            unitTypeCode = (int)lu.UnitType; // Feet, FeetUS, Meters...
-        else
-            unitTypeCode = (int)UnitTypeCode.Unknown;
-
-        // expected SR unit (per region) expects UnitTypeCode
-        int expectedSrUnit = MiscUtil.SrUnitByRegion(unitTypeCode);
-
-        // page unit expects FactoryCode
-        int expectedPageUnit = MiscUtil.GetPageUnitByRegion(mapUnitFc);
-
-        // Convert ground dimension to expected SR units (UnitTypeCode -> expectedSrUnit)
-        double groundWidthExp = MiscUtil.RoundToDecimalD(
-            MiscUtil.DistanceConversion(groundWidth, unitTypeCode, expectedSrUnit));
-
-        double groundHeightExp = MiscUtil.RoundToDecimalD(
-            MiscUtil.DistanceConversion(groundHeight, unitTypeCode, expectedSrUnit));
-
-        // Convert expected SR units into “page-friendly” units (cm/in)
-        double toPageFactor = 1.0;
-        if (expectedPageUnit == (int)ArcGIS.Core.CIM.esriUnits.esriCentimeters) toPageFactor = 100.0;
-        else if (expectedPageUnit == (int)ArcGIS.Core.CIM.esriUnits.esriInches) toPageFactor = 12.0;
-
-        double groundWidthPage = groundWidthExp * toPageFactor;
-        double groundHeightPage = groundHeightExp * toPageFactor;
-
-        // Ratio (same as before)
-        double ratio = groundWidth / groundHeight;
-        // ------------------------------------------------------
-
-        void AdjustOffsets(double px, double py)
+        private static LogoSelection ParseLogoSelection(LayoutBuildOptions options)
         {
-            double larger = Math.Max(px, py);
-            double pageRatioLocal = MiscUtil.RoundToDecimalD(larger / 11.0);
-            double coeff = 0.0;
+            if (options.FullPage || string.IsNullOrWhiteSpace(options.LogoOption))
+                return new LogoSelection(null, LogoPlacement.None, GraphicKind.None, null);
 
-            if (pageRatioLocal >= 7.0) coeff = MiscUtil.RoundToDecimalD(MapLayoutConstants.pageCoeff * pageRatioLocal * 7.5);
-            else if (pageRatioLocal >= 6.0) coeff = MiscUtil.RoundToDecimalD(MapLayoutConstants.pageCoeff * pageRatioLocal * 6.5);
-            else if (pageRatioLocal >= 5.0) coeff = MiscUtil.RoundToDecimalD(MapLayoutConstants.pageCoeff * pageRatioLocal * 5.5);
-            else if (pageRatioLocal >= 4.0) coeff = MiscUtil.RoundToDecimalD(MapLayoutConstants.pageCoeff * pageRatioLocal * 4.5);
-            else if (pageRatioLocal >= 3.0) coeff = MiscUtil.RoundToDecimalD(MapLayoutConstants.pageCoeff * pageRatioLocal * 3.5);
-            else if (pageRatioLocal >= 2.5) coeff = MiscUtil.RoundToDecimalD(MapLayoutConstants.pageCoeff * pageRatioLocal * 2.5);
-            else if (pageRatioLocal >= 2.0) coeff = MiscUtil.RoundToDecimalD(MapLayoutConstants.pageCoeff * pageRatioLocal * 2.0);
-            else if (pageRatioLocal >= 1.5) coeff = MiscUtil.RoundToDecimalD(MapLayoutConstants.pageCoeff * pageRatioLocal * 1.5);
+            string opt = options.LogoOption.Trim();
 
-            workingLegendPercent = MapLayoutConstants.legendAreaPercent;
-            workingMargin = MapLayoutConstants.marginSz + MapLayoutConstants.marginSz * coeff;
-            workingGap = MapLayoutConstants.gapSz + MapLayoutConstants.gapSz * coeff;
+            // Bureau
+            Bureau? bureau = null;
+            if (opt.Contains("BOEM", StringComparison.OrdinalIgnoreCase)) bureau = Bureau.BOEM;
+            if (opt.Contains("BSEE", StringComparison.OrdinalIgnoreCase)) bureau = Bureau.BSEE;
 
-            if (pageRatioLocal < 1.0)
-            {
-                workingMargin = MapLayoutConstants.marginSz * 0.5;
-                workingGap = MapLayoutConstants.gapSz * 0.5;
-            }
+            // Placement
+            LogoPlacement placement =
+                opt.Contains("in Legend", StringComparison.OrdinalIgnoreCase) ? LogoPlacement.InLegendPanel :
+                opt.Contains("Seal", StringComparison.OrdinalIgnoreCase) ? LogoPlacement.InLegendPanel :
+                opt.Contains("Logo", StringComparison.OrdinalIgnoreCase) ? LogoPlacement.TopLeft :
+                                                                               LogoPlacement.None;
+
+            // Kind
+            GraphicKind kind =
+                opt.Contains("Seal", StringComparison.OrdinalIgnoreCase) ? GraphicKind.Seal :
+                opt.Contains("Logo", StringComparison.OrdinalIgnoreCase) ? GraphicKind.Logo :
+                                                                          GraphicKind.None;
+
+            // File name rule (matches your current convention)
+            string? file = kind == GraphicKind.None ? null : opt + ".jpg";
+
+            return new LogoSelection(bureau, placement, kind, file);
         }
 
-        void ComputeFromY()
+        private static string? GetBureauTitle(Bureau? bureau)
         {
-            double miny = workingMargin + workingMargin;
-            double minx = workingMargin + workingMargin;
-            double cx = 4.0 * workingMargin;
-            double cy = (layoutFormat == 1) ? 4.0 * workingMargin : 2.0 * workingMargin;
-
-            if (layoutFormat == 1)
+            return bureau switch
             {
-                double mapSizeYLocal = pageY - miny - cy - workingMargin;
-                double mapSizeXLocal = mapSizeYLocal * ratio;
-                pageX = (mapSizeXLocal + minx + 2.0 * workingMargin + cx) / (1 - workingLegendPercent);
-                legendXLocal = pageX * workingLegendPercent + cx;
-                AdjustOffsets(pageX, pageY);
-
-                if (pageY > 11.0)
-                    logoMarginLocal = (pageY / 11.0) * MapLayoutConstants.logoHeight + workingMargin;
-                else
-                    logoMarginLocal = MapLayoutConstants.logoHeight + workingMargin;
-                cy = logoMarginLocal;
-
-                mapSizeYLocal = pageY - miny - cy - workingMargin;
-                mapSizeXLocal = mapSizeYLocal * ratio;
-                pageX = (mapSizeXLocal + minx + 2.0 * workingMargin + cx) / (1 - workingLegendPercent);
-                legendXLocal = pageX * workingLegendPercent + cx;
-            }
-            else if (layoutFormat == 2)
-            {
-                double mapSizeYLocal = pageY - miny - cy;
-                double mapSizeXLocal = mapSizeYLocal * ratio;
-                pageX = (mapSizeXLocal + minx + 2.0 * workingMargin + cx) / (1 - workingLegendPercent);
-                legendXLocal = pageX * workingLegendPercent + cx;
-                AdjustOffsets(pageX, pageY);
-
-                mapSizeYLocal = pageY - miny - cy;
-                mapSizeXLocal = mapSizeYLocal * ratio;
-                pageX = (mapSizeXLocal + minx + 2.0 * workingMargin + cx) / (1 - workingLegendPercent);
-                legendXLocal = pageX * workingLegendPercent + cx;
-            }
-            else if (layoutFormat == 3)
-            {
-                legendXLocal = 0.0;
-                double mapSizeYLocal = pageY - miny - cy;
-                double mapSizeXLocal = mapSizeYLocal * ratio;
-                pageX = mapSizeXLocal + minx + legendXLocal + 2.0 * workingMargin;
-                AdjustOffsets(pageX, pageY);
-
-                mapSizeYLocal = pageY - miny - cy;
-                mapSizeXLocal = mapSizeYLocal * ratio;
-                pageX = mapSizeXLocal + minx + legendXLocal + 2.0 * workingMargin;
-            }
+                Bureau.BSEE => BasemappingPro.maplayouts.MapLayoutConstants.DOI_BSEE,
+                Bureau.BOEM => BasemappingPro.maplayouts.MapLayoutConstants.DOI_BOEM,
+                _ => null
+            };
         }
 
-        void ComputeFromX()
+        private static string? GetBureauDisclaimer(Bureau? bureau)
         {
-            double miny = workingMargin + workingMargin;
-            double minx = workingMargin + workingMargin;
-            double cx = 4.0 * workingMargin;
-            double cy = (layoutFormat == 1) ? 4.0 * workingMargin : 2.0 * workingMargin;
-
-            if (layoutFormat == 1)
+            return bureau switch
             {
-                legendXLocal = pageX * workingLegendPercent + cx;
-                double mapSizeXLocal = pageX - minx - legendXLocal - 2.0 * workingMargin;
-                double mapSizeYLocal = mapSizeXLocal / ratio;
-                pageY = mapSizeYLocal + miny + cy + workingMargin;
-                AdjustOffsets(pageX, pageY);
-
-                if (pageY > 11.0)
-                    logoMarginLocal = (pageY / 11.0) * MapLayoutConstants.logoHeight + workingMargin;
-                else
-                    logoMarginLocal = MapLayoutConstants.logoHeight + workingMargin;
-                cy = logoMarginLocal;
-
-                legendXLocal = pageX * workingLegendPercent + cx;
-                mapSizeXLocal = pageX - minx - legendXLocal - 2.0 * workingMargin;
-                mapSizeYLocal = mapSizeXLocal / ratio;
-                pageY = mapSizeYLocal + miny + cy + workingMargin;
-            }
-            else if (layoutFormat == 2)
-            {
-                legendXLocal = pageX * workingLegendPercent + cx;
-                double mapSizeXLocal = pageX - minx - legendXLocal - 2.0 * workingMargin;
-                double mapSizeYLocal = mapSizeXLocal / ratio;
-                pageY = mapSizeYLocal + miny + cy;
-                AdjustOffsets(pageX, pageY);
-
-                legendXLocal = pageX * workingLegendPercent + cx;
-                mapSizeXLocal = pageX - minx - legendXLocal - 2.0 * workingMargin;
-                mapSizeYLocal = mapSizeXLocal / ratio;
-                pageY = mapSizeYLocal + miny + cy;
-            }
-            else if (layoutFormat == 3)
-            {
-                legendXLocal = 0.0;
-                double mapSizeXLocal = pageX - minx - legendXLocal - 2.0 * workingMargin;
-                double mapSizeYLocal = mapSizeXLocal / ratio;
-                pageY = mapSizeYLocal + miny + cy;
-                AdjustOffsets(pageX, pageY);
-
-                mapSizeXLocal = pageX - minx - legendXLocal - 2.0 * workingMargin;
-                mapSizeYLocal = mapSizeXLocal / ratio;
-                pageY = mapSizeYLocal + miny + cy;
-            }
+                Bureau.BSEE => BasemappingPro.maplayouts.MapLayoutConstants.DISCLAIMER_BSEE,
+                Bureau.BOEM => BasemappingPro.maplayouts.MapLayoutConstants.DISCLAIMER_BOEM,
+                _ => null
+            };
         }
 
-        void ComputeFromScale(bool isRatioPath)
+
+        /// <summary>
+        /// Composes a complete layout based on the provided options.
+        /// </summary>
+        /// <param name="options">The layout build options.</param>
+        /// <returns>A LayoutBuildOutcome indicating the result of the build operation.</returns>
+        public static async Task<LayoutBuildOutcome> ComposeLayoutAsync(LayoutBuildOptions options)
         {
-            if (isRatioPath)
+            var outcome = new LayoutBuildOutcome();
+
+            try
             {
-                mapScale = ClampPositive(mapScale);
-                relScale = ClampPositive(feet ? mapScale / 12.0 : mapScale / 100.0);
-            }
-            else
-            {
-                relScale = ClampPositive(relScale);
-                mapScale = ClampPositive(feet ? relScale * 12.0 : relScale * 100.0);
-            }
-
-            // Use converted ground dims in “page units” for frame sizing (legacy behavior)
-            double mapFrameX = groundWidthPage / mapScale;
-            double mapFrameY = groundHeightPage / mapScale;
-
-            double miny = workingMargin + workingMargin;
-            double minx = workingMargin + workingMargin;
-            double cx = 4.0 * workingMargin;
-            double cy = 2.0 * workingMargin;
-
-            if (layoutFormat == 2)
-            {
-                pageY = mapFrameY + miny + cy;
-                legendXLocal = mapFrameX * workingLegendPercent + cx;
-                pageX = minx + mapFrameX + legendXLocal + 3.0 * workingMargin;
-                AdjustOffsets(pageX, pageY);
-
-                pageY = mapFrameY + miny + cy;
-                legendXLocal = mapFrameX * workingLegendPercent + cx;
-                pageX = minx + mapFrameX + legendXLocal + 3.0 * workingMargin;
-            }
-            else if (layoutFormat == 1)
-            {
-                cy = 4.0 * workingMargin;
-                pageY = mapFrameY + miny + cy + workingMargin;
-                legendXLocal = mapFrameX * workingLegendPercent + cx;
-                pageX = minx + mapFrameX + legendXLocal + 3.0 * workingMargin;
-                AdjustOffsets(pageX, pageY);
-
-                if (pageY > 11.0)
-                    logoMarginLocal = (pageY / 11.0) * MapLayoutConstants.logoHeight + workingMargin;
-                else
-                    logoMarginLocal = MapLayoutConstants.logoHeight + workingMargin;
-                cy = logoMarginLocal;
-
-                pageY = mapFrameY + miny + cy + workingMargin;
-                legendXLocal = mapFrameX * workingLegendPercent + cx;
-                pageX = minx + mapFrameX + legendXLocal + 3.0 * workingMargin;
-            }
-            else if (layoutFormat == 3)
-            {
-                legendXLocal = 0.0;
-                cx = 4 * workingMargin;
-                cy = 4 * workingMargin;
-                pageY = mapFrameY + cy;
-                pageX = mapFrameX + cx;
-                AdjustOffsets(pageX, pageY);
-
-                pageY = mapFrameY + cy;
-                pageX = mapFrameX + cx;
-            }
-        }
-
-        switch (origin)
-        {
-            case RecalcOrigin.PageY:
-                ComputeFromY();
-                mapScale = ClampPositive(mv.Camera.Scale);
-                relScale = ClampPositive(feet ? mapScale / 12.0 : mapScale / 100.0);
-                break;
-
-            case RecalcOrigin.PageX:
-                ComputeFromX();
-                mapScale = ClampPositive(mv.Camera.Scale);
-                relScale = ClampPositive(feet ? mapScale / 12.0 : mapScale / 100.0);
-                break;
-
-            case RecalcOrigin.RatioScale:
-                ComputeFromScale(isRatioPath: true);
-                break;
-
-            case RecalcOrigin.RelativeScale:
-                ComputeFromScale(isRatioPath: false);
-                break;
-
-            case RecalcOrigin.FormatChange:
-                if (_lastUserEditOrigin == RecalcOrigin.PageX)
+                // Validate inputs
+                if (options.PageWidth <= 0 || options.PageHeight <= 0)
                 {
-                    ComputeFromX();
-                    mapScale = ClampPositive(mv.Camera.Scale);
-                    relScale = ClampPositive(feet ? mapScale / 12.0 : mapScale / 100.0);
+                    return LayoutBuildOutcome.CreateFailure("Invalid page dimensions.");
                 }
-                else if (_lastUserEditOrigin == RecalcOrigin.PageY)
+
+                // Get active map
+                var mapView = MapView.Active;
+                if (mapView?.Map == null)
                 {
-                    ComputeFromY();
-                    mapScale = ClampPositive(mv.Camera.Scale);
-                    relScale = ClampPositive(feet ? mapScale / 12.0 : mapScale / 100.0);
+                    return LayoutBuildOutcome.CreateFailure("No active map view available.");
+                }
+                options.ActiveViewCamera = mapView?.Camera;
+                options.ActiveViewExtent = mapView?.Extent;
+
+                var layoutSelected = 0; // 1 for seal, 2 for logo, 3 for map only
+                if (options.LogoOption == "BSEE Logo in Legend" || options.LogoOption == "BOEM Logo in Legend" ||
+                    options.LogoOption == "DOI Seal BSEE" ||
+                    options.LogoOption == "DOI Seal BOEM")
+                {
+                    layoutSelected = 1; // seal
+                }
+                else if (options.LogoOption == "BSEE Logo" ||
+                         options.LogoOption == "BOEM Logo")
+                {
+                    layoutSelected = 2; // logo
                 }
                 else
                 {
-                    ComputeFromScale(isRatioPath: true);
+                    layoutSelected = 3; // map only
+                }
+                Console.WriteLine($"Layout selected: {layoutSelected}");
+                var map = mapView.Map;
+                var mainMapExtent = mapView.Extent;
+
+                // --------------------------------------------------------------------
+                // Pipeline locate layer & export selected or export all
+                // --------------------------------------------------------------------
+                PipelineTableExportResult? pipelineExport = null;
+
+                if (!options.FullPage)
+                {
+                    try
+                    {
+                        // Locate the pipeline source layer ppl_masters_sde_view under Pipelines group
+                        var pipelinesLayer = await PipelineLayerLocator.FindPipelineSourceLayerAsync(map, requireVisible: false);
+
+                        if (pipelinesLayer != null)
+                        {
+                            options.PipelinesPresent = true;
+
+                            // Decide selection count (must be on MCT)
+                            int selectedCount = 0;
+
+                            await QueuedTask.Run(() =>
+                            {
+                                selectedCount = pipelinesLayer.GetSelection()?.GetObjectIDs()?.Count ?? 0;
+                            });
+
+                            var exporter = new PipelineTableExporter();
+                            string outFolder = System.IO.Path.Combine(Project.Current.HomeFolderPath, "BasemappingPro_Work");
+                            const string fileName = "pipline_data.txt";
+
+                            // To Printer mode selected in ui
+                            if (options.PipelineToPrinter)
+                            {
+                                // selected if any selection, else all
+                                pipelineExport = (selectedCount > 0)
+                                    ? await exporter.ExportSelectedAsync(pipelinesLayer, outFolder, outputFileName: fileName)
+                                    : await exporter.ExportAllAsync(pipelinesLayer, outFolder, outputFileName: fileName);
+
+                                options.PipelineTableFilePath = pipelineExport.FilePath;
+                                options.PipelineTableTitleLine = pipelineExport.TitleLine;
+
+                                // prevent on-layout pipeline table
+                                options.SelectedPipelineCount = 0;
+                                options.SkipPipelineTableFromUserChoice = true;
+
+                                // Flag as printer mode
+                                options.Destination = OutputDestination.Printer;
+                            }
+                            else
+                            {
+
+                                // On Layout
+                                if (selectedCount > 0 && !options.SkipPipelineTableFromUserChoice)
+                                {
+                                    pipelineExport = await exporter.ExportSelectedAsync(
+                                        pipelinesLayer, outFolder, outputFileName: fileName);
+
+                                    options.PipelineTableFilePath = pipelineExport.FilePath;
+                                    options.PipelineTableTitleLine = pipelineExport.TitleLine;
+                                    options.SelectedPipelineCount = pipelineExport.RecordCount;
+
+                                    options.SkipPipelineTableFromUserChoice = false;
+                                }
+                                else
+                                {
+                                    // No selection so export ALL and do NOT plac on layout
+                                    pipelineExport = await exporter.ExportAllAsync(
+                                        pipelinesLayer, outFolder, outputFileName: fileName);
+
+                                    options.PipelineTableFilePath = pipelineExport.FilePath;
+                                    options.PipelineTableTitleLine = pipelineExport.TitleLine;
+
+                                    options.SelectedPipelineCount = 0;
+                                    options.SkipPipelineTableFromUserChoice = true;
+                                    options.Destination = OutputDestination.Printer;
+                                }
+                            }
+                        }
+                        else
+                        {
+                            // Couldn’t find layer treat as not present
+                            options.PipelinesPresent = false;
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        // continue layout build
+                        MessageBox.Show($"Pipeline export failed: {ex}");
+                    }
                 }
 
-                // NOTE: this overwrites user-entered scale on format change; kept as-is
-                mapScale = ClampPositive(mv.Camera.Scale);
-                relScale = ClampPositive(feet ? mapScale / 12.0 : mapScale / 100.0);
-                break;
+                // Create the layout
+                var layout = await CreateBaseLayoutAsync(options);
+                if (layout == null)
+                {
+                    return LayoutBuildOutcome.CreateFailure("Failed to create layout.");
+                }
 
-            default:
-                return new SizeScaleResult(inputX, inputY, inputMapScale, inputRelScale);
+                //pipeline outcomes
+                outcome.PipelineTableFilePath = options.PipelineTableFilePath;
+                outcome.PipelineTableNotFit = options.PipelineTableTooLarge;
+                outcome.PipelineTableSkipped = options.SkipPipelineTableFromUserChoice;
+                outcome.SelectedPipelineCount = options.SelectedPipelineCount;
+                outcome.ShouldPrintPipelineTable = options.PipelineToPrinter;
+
+
+                outcome.LayoutName = layout.Name;
+                outcome.Success = true;
+
+                // Calculate layout geometry
+                double pageWidth = options.PageWidth;
+                double pageHeight = options.PageHeight;
+                double margin = DefaultMargin;
+
+
+                // Calculate legend/right strip area
+                double legendWidth = 0;
+                double rightStripX = pageWidth - margin;
+                if (!options.FullPage && options.LegendIncluded)
+                {
+                    legendWidth = pageWidth * LegendAreaPercent;
+                    rightStripX = pageWidth - legendWidth - margin;
+                }
+
+                // Calculate available space for overview and pipeline table
+                double topMargin = margin;
+                double bottomMargin = margin;
+                double availableTopY = pageHeight - topMargin;
+                double rightStripWidth = legendWidth > 0 ? legendWidth : 2.0;
+
+                //Open new layout on the GUI thread
+                await ProApp.Panes.CreateLayoutPaneAsync(layout);
+
+                return outcome;
+            }
+            catch (Exception ex)
+            {
+                return LayoutBuildOutcome.CreateFailure($"Layout composition failed: {ex.Message}");
+            }
         }
 
-        pageX = ClampPositive(MiscUtil.RoundToDecimalD(pageX));
-        pageY = ClampPositive(MiscUtil.RoundToDecimalD(pageY));
-        mapScale = ClampPositive(MiscUtil.RoundToDecimalD(mapScale));
-        relScale = ClampPositive(MiscUtil.RoundToDecimalD(relScale));
+        /// Creates and styles a double alternating scale bar.
+        /// MUST be called on the MCT (inside QueuedTask.Run).
+        private static void CreateStyledScaleBar(
+            Layout layout,
+            MapFrame mapFrame,
+            Envelope scaleBarEnvelope)
+        {
+            if (layout == null) return;
+            if (mapFrame == null) return;
+            if (scaleBarEnvelope == null) return;
 
-        return new SizeScaleResult(pageX, pageY, mapScale, relScale);
-    });
+            // Find the style + scalebar item
+
+            var arcgis2D = Project.Current
+                .GetItems<StyleProjectItem>()
+                .FirstOrDefault(si => si.Name.Equals("ArcGIS 2D", StringComparison.OrdinalIgnoreCase));
+
+            if (arcgis2D == null)
+                return;
+
+
+            // possible we should be searching for units then determining style
+            string query = "Double Alternating Scale Bar";
+
+
+            var scaleBarItem = arcgis2D
+                .SearchScaleBars(query)
+                .FirstOrDefault();
+
+            // Create the scale bar using the style item
+            var sbInfo = new ScaleBarInfo
+            {
+                MapFrameName = mapFrame.Name,
+                ScaleBarStyleItem = scaleBarItem
+            };
+
+            var sbElm = ElementFactory.Instance.CreateMapSurroundElement(
+                layout,
+                scaleBarEnvelope,
+                sbInfo) as MapSurround;
+
+            if (sbElm == null)
+                return;
+
+            sbElm.SetName("BM_RightPanel_Scalebar");
+            sbElm.SetVisible(true);
+
+        }
+
+        //helper method to add padding to legend
+        private static Envelope InsetEnvelope(Envelope env, double inset)
+        {
+            if (env == null) throw new ArgumentNullException(nameof(env));
+            if (inset <= 0) return env;
+
+            double xMin = env.XMin + inset;
+            double xMax = env.XMax - inset;
+            double yMin = env.YMin + inset;
+            double yMax = env.YMax - inset;
+
+            return EnvelopeBuilderEx.CreateEnvelope(
+                new Coordinate2D(xMin, yMin),
+                new Coordinate2D(xMax, yMax));
+        }
+
+
+        /// <summary>
+        /// Creates the base layout with page settings and map frame.
+        /// </summary>
+        /// <summary>
+        /// Creates the base layout with page settings and map frame.
+        /// </summary>
+        private static async Task<Layout?> CreateBaseLayoutAsync(LayoutBuildOptions options)
+        {
+            return await QueuedTask.Run(async () =>
+            {
+                try
+                {
+                    double pageHeight = options.PageHeight;
+                    double basePageWidth = options.PageWidth;
+                    double pageWidth = basePageWidth;
+
+                    // --------------------------------------------------------------------
+                    // get map view
+                    // --------------------------------------------------------------------
+                    var mapView = MapView.Active;
+                    var map = mapView?.Map
+                              ?? Project.Current.GetItems<MapProjectItem>().FirstOrDefault()?.GetMap();
+
+                    if (map == null)
+                        return null;
+
+                    string mapName = map.Name;
+                    var currentExtent = mapView?.Extent;
+
+                    // --------------------------------------------------------------------
+                    // CONSTANTS / SPACING  
+                    // --------------------------------------------------------------------
+                    double marginSz = MapLayoutConstants.marginSz;
+                    double gapSz = MapLayoutConstants.gapSz;
+
+                    // Scale offsets
+                    double larger = Math.Max(basePageWidth, pageHeight);
+                    double pageRatio = Math.Round(larger / 11.0, 4);
+                    double pagelocalCoeff = MapLayoutConstants.pageCoeff * pageRatio;
+
+                    marginSz = MapLayoutConstants.marginSz + MapLayoutConstants.marginSz * pagelocalCoeff;
+                    gapSz = MapLayoutConstants.gapSz + MapLayoutConstants.gapSz * pagelocalCoeff;
+
+                    // --------------------------------------------------------------------
+                    // Compute logoMarginSz like Java
+                    // --------------------------------------------------------------------
+                    double logoMarginSz;
+                    if (pageHeight > 11.0)
+                        logoMarginSz = (pageHeight / 11.0) * MapLayoutConstants.logoHeight + marginSz;
+                    else
+                        logoMarginSz = MapLayoutConstants.logoHeight + marginSz;
+
+                    // --------------------------------------------------------------------
+                    // wide-page boost for logo height 
+                    // --------------------------------------------------------------------
+                    double ar = basePageWidth / pageHeight;
+                    double boost = 1.0;
+                    if (ar > 1.0)
+                    {
+                        boost = 1.0 + Math.Min(0.20, (ar - 1.0) * 0.10);
+                    }
+                    logoMarginSz *= boost;
+
+                    // --------------------------------------------------------------------
+                    // Determine logo behavior from LogoSelection model
+                    // --------------------------------------------------------------------
+                    var selection = ParseLogoSelection(options);
+                    var titleText = GetBureauTitle(selection.Bureau);
+                    var disclaimerText = GetBureauDisclaimer(selection.Bureau);
+
+                    bool usesTopLogoBand = (!options.FullPage && selection.Placement == LogoPlacement.TopLeft);
+                    bool hasRightPanel = !options.FullPage;
+
+                    double inner = marginSz;
+
+                    // compute logo band height
+                    double logoBand = 0.0;
+                    if (usesTopLogoBand)
+                    {
+                        logoBand = logoMarginSz - marginSz;
+                        if (logoBand < 0) logoBand = 0;
+                    }
+
+                    // --------------------------------------------------------------------
+                    // Neatline envelope using BASE width for pipeline sizing
+                    // --------------------------------------------------------------------
+                    Coordinate2D rec_ll_base = new Coordinate2D(marginSz, marginSz);
+                    Coordinate2D rec_ur_base = usesTopLogoBand
+                        ? new Coordinate2D(basePageWidth - marginSz, pageHeight - logoBand - marginSz)
+                        : new Coordinate2D(basePageWidth - marginSz, pageHeight - marginSz);
+
+                    Envelope rec_env_base = EnvelopeBuilderEx.CreateEnvelope(rec_ll_base, rec_ur_base);
+
+                    // IMPORTANT content envelope stays BASE width.
+                    // All map frame + right panel sizing uses this.
+                    Envelope rec_env_content = rec_env_base;
+
+                    // frame height derived from base neatline
+                    double frameHeight_base = rec_env_base.Height - (2 * inner);
+                    if (frameHeight_base <= 0)
+                        return null;
+
+                    // --------------------------------------------------------------------
+                    // Spec + font sizing 
+                    // --------------------------------------------------------------------
+                    LayoutSpec spec = new LayoutSpec();
+                    MapLayoutFactory.ApplyFontSizing(options, spec);
+
+                    spec.MarginSz = marginSz;
+                    spec.GapSz = gapSz;
+                    spec.LogoMarginSz = logoMarginSz;
+
+                    // --------------------------------------------------------------------
+                    // Pipeline sizing 
+                    // --------------------------------------------------------------------
+                    LayoutPipelineTableBuilder.PopulatePipelineSizing(options, spec, frameHeight_base);
+
+                    // Reset per-run flag
+                    options.PipelineTableTooLarge = false;
+
+                    if (spec.HasPipelineOnLayout && spec.PipelineSizing?.HasTable == true)
+                    {
+                        // Policy v1: only allow 1 column on layout
+                        if (spec.PipelineSizing.ColumnCount > 1)
+                        {
+                            // Abort on-layout pipeline rendering
+                            options.PipelineTableTooLarge = true;
+                            spec.HasPipelineOnLayout = false;
+                            spec.PipelineSizing = null;
+
+                            // IMPORTANT: do NOT expand the page width
+                            pageWidth = basePageWidth;
+                        }
+                        else
+                        {
+                            // OK to embed: expand
+                            pageWidth = basePageWidth + spec.PipelineSizing.TotalWidthIn;
+                        }
+                    }
+
+                    // --------------------------------------------------------------------
+                    // Page + Layout 
+                    // --------------------------------------------------------------------
+                    var page = new CIMPage
+                    {
+                        Width = pageWidth,
+                        Height = pageHeight,
+                        Units = LinearUnit.Inches,
+                        ShowGuides = true,
+                        ShowRulers = true
+                    };
+
+                    var layout = LayoutFactory.Instance.CreateLayout(page);
+                    layout.SetName($"{mapName}_{pageWidth}x{pageHeight}_{DateTime.UtcNow:yyyyMMdd_HHmmss}_{Guid.NewGuid().ToString("N").Substring(0, 8)}");
+
+                    // --------------------------------------------------------------------
+                    // Neatline envelope using final pageWidth, then draw neatline
+                    // This is for drawing only. Do not use this for mapframe/panel sizing.
+                    // --------------------------------------------------------------------
+                    Coordinate2D rec_ll = new Coordinate2D(marginSz, marginSz);
+                    Coordinate2D rec_ur = usesTopLogoBand
+                        ? new Coordinate2D(pageWidth - marginSz, pageHeight - logoBand - marginSz)
+                        : new Coordinate2D(pageWidth - marginSz, pageHeight - marginSz);
+                    Envelope rec_env = EnvelopeBuilderEx.CreateEnvelope(rec_ll, rec_ur);
+
+                    Envelope rec_env_neatline = EnvelopeBuilderEx.CreateEnvelope(rec_ll, rec_ur);
+
+                    // Create neatline element 
+                    CIMStroke outline = SymbolFactory.Instance.ConstructStroke(
+                        ColorFactory.Instance.BlackRGB, MapLayoutConstants.NEATLINE_WIDTH, SimpleLineStyle.Solid);
+
+                    CIMPolygonSymbol polySym = SymbolFactory.Instance.ConstructPolygonSymbol(
+                        ColorFactory.Instance.GreenRGB, SimpleFillStyle.Null, outline);
+
+                    _ = ElementFactory.Instance.CreateGraphicElement(layout, rec_env_neatline, polySym, "Neatline");
+
+                    // --------------------------------------------------------------------
+                    // Map frame is computed from the base-width content envelope (rec_env_content)
+                    // --------------------------------------------------------------------
+                    double frameX = rec_env_content.XMin + inner;
+                    double frameY = rec_env_content.YMin + inner;
+                    double frameWidth = rec_env_content.Width - (2 * inner);
+                    double frameHeight = rec_env_content.Height - (2 * inner);
+
+                    if (frameWidth <= 0 || frameHeight <= 0)
+                        return layout;
+
+                    // --------------------------------------------------------------------
+                    // Reserve right panel width for ANY non-full-page layout
+                    // compute this off basePageWidth so the panel doesn't grow when pipeline expands the page.
+                    // --------------------------------------------------------------------
+                    double rightPanelWidth = 0;
+                    if (hasRightPanel)
+                    {
+                        double rpPct = MapLayoutFactory.ComputeEffectiveRightPanelPercent(basePageWidth, pageHeight);
+                        rightPanelWidth = basePageWidth * rpPct;
+
+                        frameWidth -= rightPanelWidth;
+                        if (frameWidth <= 0)
+                            return layout;
+                    }
+
+                    // Logo filename derived from selection model
+                    string logoFileName = selection.FileName;
+
+                    // --------------------------------------------------------------------
+                    // Create map frame envelope
+                    // --------------------------------------------------------------------
+                    var frameEnvelope = EnvelopeBuilderEx.CreateEnvelope(
+                        new Coordinate2D(frameX, frameY),
+                        new Coordinate2D(frameX + frameWidth, frameY + frameHeight));
+
+                    var mapFrame = ElementFactory.Instance.CreateMapFrameElement(
+                        layout,
+                        frameEnvelope,
+                        map,
+                        "Main Map Frame");
+
+                    var activeView = MapView.Active;
+
+                    //fallback, 
+                    var exten = activeView.Extent;
+                    try
+                    {
+                        var ext = options.ActiveViewExtent;
+                        if (ext != null)
+                        {
+                            mapFrame.SetCamera(ext);
+                        }
+                        
+                        else if (options.ActiveViewCamera != null)
+                        {
+                            // Fallback
+                            mapFrame.SetCamera(exten);
+                            //mapFrame.SetCamera(options.ActiveViewCamera);
+                        }
+                        
+                    }
+                    catch
+                    {
+                        //
+                    }
+
+
+                    // --------------------------------------------------------------------
+                    // PIPELINE BAND & Place text
+                    // --------------------------------------------------------------------
+                    Envelope? pipelineBandEnv = null;
+                    if (spec.HasPipelineOnLayout && spec.PipelineSizing?.HasTable == true)
+                    {
+                        double bandXMin = frameEnvelope.XMax + marginSz;
+                        double bandXMax = bandXMin + spec.PipelineSizing.TotalWidthIn;
+
+                        double bandYMin = frameEnvelope.YMin;
+                        double bandYMax = frameEnvelope.YMax;
+
+                        if (bandXMax > bandXMin)
+                        {
+                            pipelineBandEnv = EnvelopeBuilderEx.CreateEnvelope(
+                                new Coordinate2D(bandXMin, bandYMin),
+                                new Coordinate2D(bandXMax, bandYMax));
+
+                            try
+                            {
+                                CIMStroke pipeStroke = SymbolFactory.Instance.ConstructStroke(
+                                    ColorFactory.Instance.BlackRGB, 1.0, SimpleLineStyle.Solid);
+
+                                CIMPolygonSymbol pipePoly = SymbolFactory.Instance.ConstructPolygonSymbol(
+                                    ColorFactory.Instance.WhiteRGB, SimpleFillStyle.Null, pipeStroke);
+
+                                var pipeBandElm = ElementFactory.Instance.CreateGraphicElement(
+                                    layout, pipelineBandEnv, pipePoly, "BM_PipelineBand_Border");
+
+                                pipeBandElm.SetName("BM_PipelineBand_Border");
+                            }
+                            catch
+                            {
+                                //
+                            }
+                        }
+                    }
+
+                    if (pipelineBandEnv != null && spec.PipelineSizing?.HasTable == true)
+                    {
+                        LayoutPipelineTableBuilder.DrawPipelineTableFromFile(
+                            layout,
+                            options,
+                            spec,
+                            pipelineBandEnv);
+                    }
+
+                    // --------------------------------------------------------------------
+                    // Compute RIGHT PANEL envelope 
+                    // --------------------------------------------------------------------
+                    Envelope? rightPanelEnv = null;
+
+                    if (hasRightPanel)
+                    {
+                        double panelXMin = (pipelineBandEnv != null)
+                            ? pipelineBandEnv.XMax + marginSz
+                            : frameEnvelope.XMax + marginSz;
+
+                        double panelXMax = panelXMin + rightPanelWidth;
+
+                        // Clamp to expanded neatline inner edge 
+                        double maxAllowed = rec_env_neatline.XMax - inner;
+                        if (panelXMax > maxAllowed)
+                            panelXMax = maxAllowed;
+
+                        // if pipeline is absurdly wide and panel collapses detect it here.
+                        if (panelXMax <= panelXMin)
+                        {
+                            // just bail out of panel creation.
+                            rightPanelEnv = null;
+                        }
+                        else
+                        {
+                            double panelYMin = frameEnvelope.YMin;
+                            double panelYMax = frameEnvelope.YMax;
+
+                            rightPanelEnv = EnvelopeBuilderEx.CreateEnvelope(
+                                new Coordinate2D(panelXMin, panelYMin),
+                                new Coordinate2D(panelXMax, panelYMax));
+
+                            // Draw right hand envelope
+                            try
+                            {
+                                CIMStroke rpStroke = SymbolFactory.Instance.ConstructStroke(
+                                    ColorFactory.Instance.BlackRGB, 1.0, SimpleLineStyle.Solid);
+
+                                CIMPolygonSymbol rpPoly = SymbolFactory.Instance.ConstructPolygonSymbol(
+                                    ColorFactory.Instance.WhiteRGB, SimpleFillStyle.Null, rpStroke);
+
+                                GraphicElement rpBorderElm = ElementFactory.Instance.CreateGraphicElement(
+                                    layout, rightPanelEnv, rpPoly, "BM_RightPanel_Border");
+
+                                rpBorderElm.SetName("BM_RightPanel_Border");
+                            }
+                            catch
+                            {
+                                //
+                            }
+                        }
+                    }
+
+                    // --------------------------------------------------------------------
+                    // Place and compute Date Time
+                    // --------------------------------------------------------------------
+                    try
+                    {
+
+                        double fontSize = spec.DisclaimerFontSize;
+
+                        // users timezone
+                        var tz = TimeZoneInfo.Local;
+                        var now = TimeZoneInfo.ConvertTime(DateTime.Now, tz);
+
+                        string stamp = now.ToString("dddd, dd MMM yyyy HH:mm");
+
+                        var sym = SymbolFactory.Instance.ConstructTextSymbol(
+                            ColorFactory.Instance.BlackRGB, fontSize, "Arial", "Regular");
+
+                        sym.HorizontalAlignment = HorizontalAlignment.Right;
+
+                        // Position: below neatline, lower-right corner
+                        double inset = marginSz;
+                        var pt = MapPointBuilderEx.CreateMapPoint(rec_env.XMax, rec_env.YMin - inset);
+
+                        var dtElm = ElementFactory.Instance.CreateTextGraphicElement(
+                            layout,
+                            TextType.PointText,
+                            pt,
+                            sym,
+                            stamp);
+
+                        dtElm.SetName("BM_DateTime");
+                    }
+                    catch
+                    {
+                        // 
+                    }
+
+                    if (rightPanelEnv != null)
+                    {
+                        MapLayoutFactory.ComputeMapTitlesAnchorPoint(options, spec, rightPanelEnv);
+                        MapLayoutFactory.ComputeRightPanelHeader(options, spec, rightPanelEnv);
+                        MapLayoutFactory.ComputeRightPanelLegendHeaderAnchors(options, spec, rightPanelEnv);
+
+                        //MapLayoutFactory.ComputeMapTitlesBlock(options, spec);
+                        MapLayoutFactory.ComputeRightPanelScaleBarBlock(options, spec);
+
+                        MapLayoutFactory.ComputeRightPanelScaleTextAnchor(options, spec);
+                        //MapLayoutFactory.ComputeRightPanelScaleTextBlock(options, spec);
+                        //MapLayoutFactory.ComputeRightPanelDisclaimerAnchor(options, spec);
+                        //MapLayoutFactory.ComputeRightPanelDisclaimerBlock(options, spec);
+
+                        //MapLayoutFactory.ComputeRightPanelCommentsBlock(options, spec);
+                        //MapLayoutFactory.ComputeRightPanelProjectionBlock(options, spec);
+                        //MapLayoutFactory.ComputeRightPanelOverviewBlock(options, spec);
+                    }
+
+                    // --------------------------------------------------------------------
+                    // Place logo/seal based on selection
+                    // --------------------------------------------------------------------
+                    if (!options.FullPage && !string.IsNullOrEmpty(logoFileName))
+                    {
+                        if (selection.Placement == LogoPlacement.TopLeft)
+                        {
+                            double gap = 0.10;
+                            Envelope? logoEnv = null;
+
+                            try
+                            {
+                                // Logo placement block Java-equivalent sizing
+                                double logoLeftX = rec_env.XMin; // == marginSz
+
+                                // Java-equivalent logo height inside the reserved band
+                                double logoHeight = logoMarginSz - (2.0 * gapSz);
+                                double logoBottomY = rec_env.YMax + gapSz;
+                                if (logoHeight <= 0.05) logoHeight = 0.25; // defensive fallback
+
+                                double logoTopY = logoBottomY + logoHeight;
+
+                                string logoPath = Path.Combine(TimsConstants.BASEMAPPING_LOGO, logoFileName);
+
+                                var bitmap = new BitmapImage();
+                                bitmap.BeginInit();
+                                bitmap.UriSource = new Uri(logoPath, UriKind.Absolute);
+                                bitmap.CacheOption = BitmapCacheOption.OnLoad;
+                                bitmap.EndInit();
+
+                                double ratio = (double)bitmap.PixelWidth / bitmap.PixelHeight;
+
+                                // Java-equivalent width from aspect ratio
+                                double logoWidth = logoHeight * ratio;
+
+                                double logoRightX = logoLeftX + logoWidth;
+
+                                logoEnv = EnvelopeBuilderEx.CreateEnvelope(
+                                    new Coordinate2D(logoLeftX, logoBottomY),
+                                    new Coordinate2D(logoRightX, logoTopY));
+
+                                if (File.Exists(logoPath))
+                                {
+                                    GraphicElement picElm = ElementFactory.Instance.CreatePictureGraphicElement(
+                                        layout, logoEnv, logoPath, "BM_Logo_Image");
+                                    picElm.SetName("BM_Logo_Image");
+
+                                    CIMGraphic picGra = picElm.GetGraphic();
+                                    if (picGra is CIMPictureGraphic cimPicGra)
+                                    {
+                                        cimPicGra.Frame.BorderSymbol = new CIMSymbolReference
+                                        {
+                                            Symbol = SymbolFactory.Instance.ConstructLineSymbol(
+                                                ColorFactory.Instance.BlackRGB, 2.0, SimpleLineStyle.Solid)
+                                        };
+
+                                        picElm.SetGraphic(picGra);
+                                    }
+                                }
+                            }
+                            catch
+                            {
+                                // 
+                            }
+
+                            // Title text next to logo (TopLeft behavior) PointText
+                            if (!string.IsNullOrWhiteSpace(titleText) && logoEnv != null)
+                            {
+                                try
+                                {
+                                    double textGapX = 0.10;
+
+                                    // Define the available title band next to the logo
+                                    double titleXMin = logoEnv.XMax + textGapX;
+                                    double titleXMax = rec_env.XMax;
+
+                                    double titleYMin = logoEnv.YMin;
+                                    double titleYMax = logoEnv.YMax;
+
+                                    if (titleXMax > titleXMin && titleYMax > titleYMin)
+                                    {
+                                        // Center horizontally in the available band
+                                        double centerX = titleXMin;// + (titleXMax - titleXMin) / 2.0;
+
+                                        // Anchor at the bottom of the band (PointText baseline)
+                                        double anchorY = titleYMin;
+
+                                        var pt = MapPointBuilderEx.CreateMapPoint(centerX, anchorY);
+
+                                        double fontSize = spec.LogoTextFontSize > 0 ? spec.LogoTextFontSize : 12.0;
+
+                                        CIMTextSymbol titleSymbol = SymbolFactory.Instance.ConstructTextSymbol(
+                                            ColorFactory.Instance.BlackRGB, fontSize, "Arial", "Bold");
+
+                                        titleSymbol.HorizontalAlignment = HorizontalAlignment.Center;
+
+                                        var titleElm = ElementFactory.Instance.CreateTextGraphicElement(
+                                            layout,
+                                            TextType.PointText,
+                                            pt,
+                                            titleSymbol,
+                                            titleText);
+
+                                        titleElm.SetName("BM_Logo_Title");
+                                        var b = titleElm.GetBounds();
+                                        double newX = centerX + (b.Width / 2.0);
+
+                                        //check page ratio
+                                        if (ar > 1.0)
+                                        {
+                                            newX = centerX + gapSz + (b.Width / 2.0);
+                                        }
+                                        titleElm.SetX(newX);
+
+
+
+
+
+
+                                    }
+                                }
+                                catch
+                                {
+                                    //
+                                }
+                            }
+                        }
+                        else if (selection.Placement == LogoPlacement.InLegendPanel && rightPanelEnv != null)
+                        {
+                            // Title must already have an anchor point computed in MapLayoutFactory
+                            try
+                            {
+                                string headerTitle = !string.IsNullOrWhiteSpace(spec.TitleText)
+                                    ? spec.TitleText
+                                    : (titleText ?? string.Empty);
+
+                                if (!string.IsNullOrWhiteSpace(headerTitle) && spec.TitleAnchorPoint != null)
+                                {
+                                    double headerTitleSize = spec.LogoTextFontSize > 0 ? spec.LogoTextFontSize : 12.0;
+
+                                    var titleSymbol = SymbolFactory.Instance.ConstructTextSymbol(
+                                        ColorFactory.Instance.BlackRGB, headerTitleSize, "Arial", "Bold");
+
+                                    titleSymbol.HorizontalAlignment = HorizontalAlignment.Center;
+
+                                    // Place title as PointText
+                                    var titleElm = ElementFactory.Instance.CreateTextGraphicElement(
+                                        layout,
+                                        TextType.PointText,
+                                        spec.TitleAnchorPoint,
+                                        titleSymbol,
+                                        headerTitle);
+
+                                    titleElm.SetName("BM_RightPanel_Title");
+
+                                    double pad = MapLayoutFactory.InsetPad(spec);
+                                    double desiredYMax = rightPanelEnv.YMax - pad; // top of panel minus pad
+
+                                    // Measure current bounds
+                                    var tb = titleElm.GetBounds();
+
+                                    // How far off are we from desired top alignment
+                                    double dy = desiredYMax - tb.YMax;
+
+                                    // Move the element (NOT the bounds)
+                                    titleElm.SetY(spec.TitleAnchorPoint.Y + dy);
+
+                                    // Re-measure after moving
+                                    tb = titleElm.GetBounds();
+                                    spec.TitleBounds = tb;
+
+                                    if (tb != null)
+                                    {
+                                        spec.TitleBounds = tb;
+
+                                        // Now compute logo envelope based on measured title bounds
+                                        MapLayoutFactory.ComputeRightPanelLegendLogoBlockFromTitleBounds(options, spec);
+
+                                        //set information for map titles anchor points
+                                        double titlesTopRefY;
+                                        double gapForTitles = spec.GapSz;
+
+                                        if (spec.LogoEnvelope != null)
+                                            titlesTopRefY = spec.LogoEnvelope.YMin - gapForTitles;
+                                        else
+                                            titlesTopRefY = rightPanelEnv.YMax - gapForTitles;
+
+                                        double titlesCenterX = (rightPanelEnv.XMin + rightPanelEnv.XMax) / 2.0;
+
+                                        spec.MapTitlesAnchorPoint = MapPointBuilderEx.CreateMapPoint(
+                                            titlesCenterX, titlesTopRefY, rightPanelEnv.SpatialReference);
+
+                                        spec.MapTitlesDesiredYMax = titlesTopRefY;
+                                        spec.MapTitlesCenterX = titlesCenterX;
+
+                                        // Place logo picture if we have it
+                                        if (!string.IsNullOrEmpty(spec.LogoPath) &&
+                                            spec.LogoEnvelope != null &&
+                                            File.Exists(spec.LogoPath))
+                                        {
+                                            var picElm = ElementFactory.Instance.CreatePictureGraphicElement(
+                                                layout,
+                                                spec.LogoEnvelope,
+                                                spec.LogoPath,
+                                                "BM_RightPanel_Logo");
+
+                                            picElm.SetName("BM_RightPanel_Logo");
+
+                                            // 
+                                            var picGra = picElm.GetGraphic();
+                                            if (picGra is CIMPictureGraphic cimPicGra)
+                                            {
+                                                cimPicGra.Frame.BorderSymbol = new CIMSymbolReference
+                                                {
+                                                    Symbol = SymbolFactory.Instance.ConstructLineSymbol(
+                                                        ColorFactory.Instance.BlackRGB, 1.0, SimpleLineStyle.Solid)
+                                                };
+                                                picElm.SetGraphic(picGra);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            catch
+                            {
+                                //
+                            }
+                        }
+                    }
+
+                    // --------------------------------------------------------------------
+                    // Place Map Titles (1–5): when right panel exists (not full page)
+                    // --------------------------------------------------------------------
+                    try
+                    {
+                        if (!options.FullPage &&
+                            rightPanelEnv != null &&
+                            spec.MapTitlesAnchorPoint != null &&
+                            spec.MapTitlesDesiredYMax.HasValue)
+                        {
+                            var lines = new[]
+                            {
+                                options.MapTitle1, options.MapTitle2, options.MapTitle3, options.MapTitle4, options.MapTitle5
+                            }
+                            .Select(s => (s ?? string.Empty).Trim())
+                            .Where(s => !string.IsNullOrWhiteSpace(s))
+                            .ToList();
+
+                            if (lines.Count > 0)
+                            {
+                                double fontSize = spec.MapTitlesFontSize > 0
+                                    ? spec.MapTitlesFontSize
+                                    : (spec.LogoTextFontSize > 0 ? spec.LogoTextFontSize : 11.0);
+
+                                var sym = SymbolFactory.Instance.ConstructTextSymbol(
+                                    ColorFactory.Instance.BlackRGB, fontSize, "Arial", "Regular");
+
+                                sym.HorizontalAlignment = HorizontalAlignment.Center;
+
+                                string blockText = string.Join("\r\n", lines);
+
+                                // Create as PointText at rough anchor
+                                var elm = ElementFactory.Instance.CreateTextGraphicElement(
+                                    layout,
+                                    TextType.PointText,
+                                    spec.MapTitlesAnchorPoint,
+                                    sym,
+                                    blockText);
+
+                                elm.SetName("BM_RightPanel_MapTitles");
+
+                                // Recenter X 
+                                var b = elm.GetBounds();
+
+                                var newytitle = spec.MapTitlesDesiredYMax.Value;
+                                var newymax_ = b.YMax;
+                                double dyTop = newytitle - b.YMax;
+                                elm.SetY(spec.MapTitlesAnchorPoint.Y + dyTop);
+
+                                // Re-measure and shift DOWN by half its height 
+                                b = elm.GetBounds();
+
+                                //elm.SetY(elm.GetY() - (b.Height / 3));
+                                spec.MapTitlesBounds = b;
+
+                            }
+                        }
+                    }
+                    catch
+                    {
+                        //
+                    }
+
+                    // --------------------------------------------------------------------
+                    // Place SCALE BAR (bottom-anchored)
+                    // --------------------------------------------------------------------
+                    try
+                    {
+                        if (!options.FullPage &&
+                            rightPanelEnv != null &&
+                            spec.ScalebarEnvelope != null)
+                        //spec.ScaleTextEnvelope != null)
+                        {
+                            // ----- Scale Bar -----
+                            try
+                            {
+                                CreateStyledScaleBar(layout, mapFrame, spec.ScalebarEnvelope);
+
+                            }
+                            catch
+                            {
+                                //
+                            }
+                        }
+                    }
+                    catch
+                    {
+                        //
+                    }
+
+                    // --------------------------------------------------------------------
+                    // Scale Text
+                    // --------------------------------------------------------------------
+                    try
+                    {
+                        if (!options.FullPage &&
+                            spec.ScaleTextAnchorPoint != null)
+                        {
+                            string unitLabel = "units";
+
+                            try
+                            {
+                                var lu = MapView.Active?.Map?.SpatialReference?.Unit as LinearUnit;
+                                var name = lu?.Name ?? "";
+                                if (name.Equals("Foot_US", StringComparison.OrdinalIgnoreCase) || name.Contains("Foot", StringComparison.OrdinalIgnoreCase))
+                                    unitLabel = "feet";
+                                else if (name.Contains("Meter", StringComparison.OrdinalIgnoreCase))
+                                    unitLabel = "m";
+                            }
+                            catch { }
+
+                            string pageUnitLabel = unitLabel == "feet" ? "in" : "cm";
+
+                            double fontSize =
+                                spec.ScaleTextFontSize > 0 ? spec.ScaleTextFontSize :
+                                (spec.TitleFontSize > 0 ? spec.TitleFontSize : 6.0);
+
+                            var sym = SymbolFactory.Instance.ConstructTextSymbol(
+                                ColorFactory.Instance.BlackRGB, fontSize, "Arial", "Regular");
+
+                            sym.HorizontalAlignment = HorizontalAlignment.Center;
+
+                            string scaleText = $"1 {pageUnitLabel} = {options.RelativeScale:0.###} {unitLabel}";
+
+                            // Create point text at the anchor
+                            var elm = ElementFactory.Instance.CreateTextGraphicElement(
+                                layout,
+                                TextType.PointText,
+                                spec.ScaleTextAnchorPoint,
+                                sym,
+                                scaleText);
+
+                            elm.SetName("BM_RightPanel_ScaleText");
+
+                            // Measure bounds and save envelope
+                            var b = elm.GetBounds();
+                            if (b != null)
+                            {
+                                //set anchor point then call disclaimer creation
+                                spec.ScaleTextEnvelope = b;
+                                spec.ScaleTextAnchorY = b.YMax;
+                                MapLayoutFactory.ComputeRightPanelDisclaimerAnchor(options, spec);
+
+                                if (spec.RightPanelLegendEnvelope != null)
+                                {
+                                    double newBottom = b.YMax; // + pad
+
+                                    var remaining = spec.RightPanelLegendEnvelope;
+                                    if (newBottom < remaining.YMax)
+                                    {
+                                        spec.RightPanelLegendEnvelope = EnvelopeBuilderEx.CreateEnvelope(
+                                            new Coordinate2D(remaining.XMin, newBottom),
+                                            new Coordinate2D(remaining.XMax, remaining.YMax));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    catch
+                    {
+                        //
+                    }
+
+                    // --------------------------------------------------------------------
+                    // Disclaimer PointText + measure bounds + move up)
+                    // --------------------------------------------------------------------
+                    try
+                    {
+                        if (!options.FullPage &&
+                            spec.DisclaimerAnchorPoint != null &&
+                            !string.IsNullOrWhiteSpace(spec.DisclaimerText))
+                        {
+                            // Font size
+                            double fontSize =
+                                spec.DisclaimerFontSize > 0 ? spec.DisclaimerFontSize :
+                                (spec.TitleFontSize > 0 ? spec.TitleFontSize : 6.0);
+
+                            var sym = SymbolFactory.Instance.ConstructTextSymbol(
+                                ColorFactory.Instance.BlackRGB, fontSize, "Arial", "Regular");
+
+                            // Match Java: centered
+                            sym.HorizontalAlignment = HorizontalAlignment.Center;
+
+                            // Create point text at the anchor
+                            var elm = ElementFactory.Instance.CreateTextGraphicElement(
+                                layout,
+                                TextType.PointText,
+                                spec.DisclaimerAnchorPoint,
+                                sym,
+                                spec.DisclaimerText);
+
+                            elm.SetName("BM_RightPanel_Disclaimer");
+
+                            // 2) Measure bounds
+                            var b1 = elm.GetBounds();
+                            if (b1 != null)
+                            {
+                                // 3) Move up by half its height (Java: dy = height/2)
+                                //double y = elm.GetY();
+                                //elm.SetY(y + (b1.Height / 2.0));
+
+                                // Re-measure bounds after move
+                                var b2 = elm.GetBounds();
+                                if (b2 != null)
+                                {
+                                    // Save the real envelope for later logic
+                                    spec.DisclaimerEnvelope = b2;
+                                    spec.DisclaimerAnchorY = b2.YMax;
+
+                                    MapLayoutFactory.ComputeRightPanelCommentsAnchor(options, spec);
+                                    MapLayoutFactory.ComputeRightPanelProjectionAnchor(options, spec);
+
+                                    //Update remaining legend space ABOVE the disclaimer (Java spaceRemainsYMin = disclaimerEnv.YMax)
+                                    if (spec.RightPanelLegendEnvelope != null)
+                                    {
+                                        double newBottom = b2.YMax; //+ pad;
+
+                                        var remaining = spec.RightPanelLegendEnvelope;
+                                        if (newBottom < remaining.YMax)
+                                        {
+                                            spec.RightPanelLegendEnvelope = EnvelopeBuilderEx.CreateEnvelope(
+                                                new Coordinate2D(remaining.XMin, newBottom),
+                                                new Coordinate2D(remaining.XMax, remaining.YMax));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    catch
+                    {
+                        // 
+                    }
+
+                    // --------------------------------------------------------------------
+                    // MapComments
+                    // --------------------------------------------------------------------
+                    try
+                    {
+                        string comment = (options.MapCommentsText ?? "").Trim();
+
+                        if (!options.FullPage &&
+                            options.MapCommentsEnabled &&
+                            !string.IsNullOrWhiteSpace(comment) &&
+                            spec.CommentsAnchorPoint != null)
+                        {
+                            double fontSize =
+                                spec.CommentsFontSize > 0 ? spec.CommentsFontSize :
+                                (spec.TitleFontSize > 0 ? spec.TitleFontSize : 6.0);
+
+                            var sym = SymbolFactory.Instance.ConstructTextSymbol(
+                                ColorFactory.Instance.BlackRGB, fontSize, "Arial", "Regular");
+
+                            sym.HorizontalAlignment = HorizontalAlignment.Center;
+
+                            var elm = ElementFactory.Instance.CreateTextGraphicElement(
+                                layout,
+                                TextType.PointText,
+                                spec.CommentsAnchorPoint,
+                                sym,
+                                comment);
+
+                            elm.SetName("BM_RightPanel_MapComments");
+
+                            var b = elm.GetBounds();
+                            if (b != null)
+                            {
+                                spec.CommentsEnvelope = b;// optional
+                                spec.CommentsTopY = b.YMax;// IMPORTANT for projection placement
+                                MapLayoutFactory.ComputeRightPanelProjectionAnchor(options, spec);
+
+                                // shrink remaining space above comments
+                                if (spec.RightPanelLegendEnvelope != null)
+                                {
+                                    var remaining = spec.RightPanelLegendEnvelope;
+                                    double newBottom = b.YMax + gapSz; // + pad 
+
+                                    if (newBottom < remaining.YMax)
+                                    {
+                                        spec.RightPanelLegendEnvelope = EnvelopeBuilderEx.CreateEnvelope(
+                                            new Coordinate2D(remaining.XMin, newBottom),
+                                            new Coordinate2D(remaining.XMax, remaining.YMax));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    catch
+                    {
+                    }
+                    // --------------------------------------------------------------------
+                    // Projection (PointText like Java)
+                    // --------------------------------------------------------------------
+                    try
+                    {
+                        var projInfo = await ProjectionBuilderInfo.GetFromActiveSingleLayerAsync();
+
+
+                        if (projInfo != null)
+                        {
+                            // Build legacy-style projection text
+                            static string Safe(string? s) => string.IsNullOrWhiteSpace(s) ? "N/A" : s.Trim();
+
+                            spec.ProjectionText =
+                                $"Projection: \"{Safe(projInfo.ProjectionName)}\"\r\n" +
+                                $"Zone: \"{Safe(projInfo.Zone)}\"\r\n" +
+                                $"Datum: \"{Safe(projInfo.Datum)}\"\r\n" +
+                                $"Units: \"{Safe(projInfo.Units)}\"\r\n" +
+                                $"Spherical: \"{Safe(projInfo.Spheroid)}\"";
+                        }
+                        else
+                        {
+                            spec.ProjectionText = string.Empty;
+                        }
+
+                        if (!options.FullPage &&
+                            spec.ProjectionAnchorPoint != null &&
+                            !string.IsNullOrWhiteSpace(spec.ProjectionText))
+                        {
+
+                            double fontSize =
+                                spec.ProjectionFontSize > 0 ? spec.ProjectionFontSize :
+                                (spec.TitleFontSize > 0 ? spec.TitleFontSize : 6.0);
+
+                            var sym = SymbolFactory.Instance.ConstructTextSymbol(
+                                ColorFactory.Instance.BlackRGB, fontSize, "Arial", "Regular");
+
+                            sym.HorizontalAlignment = HorizontalAlignment.Center;
+
+                            var elm = ElementFactory.Instance.CreateTextGraphicElement(
+                                layout,
+                                TextType.PointText,
+                                spec.ProjectionAnchorPoint,
+                                sym,
+                                spec.ProjectionText);
+
+                            elm.SetName("BM_RightPanel_Projection");
+
+                            var b = elm.GetBounds();
+                            if (b != null)
+                            {
+                                spec.ProjectionEnvelope = b;
+                                spec.ProjectionTopY = b.YMax;
+
+                                MapLayoutFactory.ComputeRightPanelOverviewBlock(options, spec);
+
+                                // shrink remaining space above projection (same pattern)
+                                if (spec.RightPanelLegendEnvelope != null)
+                                {
+                                    var remaining = spec.RightPanelLegendEnvelope;
+                                    double newBottom = b.YMax; // + pad
+                                    if (newBottom < remaining.YMax)
+                                    {
+                                        spec.RightPanelLegendEnvelope = EnvelopeBuilderEx.CreateEnvelope(
+                                            new Coordinate2D(remaining.XMin, newBottom),
+                                            new Coordinate2D(remaining.XMax, remaining.YMax));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    catch
+                    {
+                        //
+                    }
+
+                    // --------------------------------------------------------------------
+                    // Overview Map Frame (right panel, above projection)
+                    // --------------------------------------------------------------------
+                    try
+                    {
+                        if (!options.FullPage &&
+                            options.OverviewIncluded &&
+                            spec.OverviewEnvelope != null)
+                        {
+                            // This builds/updates the overview frame at that envelope
+                            _ = LayoutOverviewFactory.BuildOrUpdateOverviewAsync(
+                                layout,
+                                map,
+                                currentExtent,
+                                spec.OverviewEnvelope);
+                        }
+                    }
+                    catch
+                    {
+                        // 
+                    }
+
+                    // --------------------------------------------------------------------
+                    // Add legend: ONLY if user requested legend
+                    // --------------------------------------------------------------------
+                    if (options.LegendIncluded && !options.FullPage && rightPanelEnv != null)
+                    {
+                        try
+                        {
+                            double pad = MapLayoutFactory.InsetPad(spec);
+
+                            double ceilingY;
+
+                            // map titles bottom
+                            if (spec.MapTitlesBounds != null)
+                                ceilingY = spec.MapTitlesBounds.YMin;
+                            else
+                                ceilingY = rightPanelEnv.YMax;
+
+                            // must be above Overview or Projection
+                            double floorY;
+                            if (options.OverviewIncluded && spec.OverviewEnvelope != null)
+                                floorY = spec.OverviewEnvelope.YMax;
+                            else if (spec.ProjectionEnvelope != null)
+                                floorY = spec.ProjectionEnvelope.YMax;
+                            else
+                                floorY = rightPanelEnv.YMin;
+
+                            // Build legend envelope inside right panel
+                            double xMin = rightPanelEnv.XMin + pad;
+                            double xMax = rightPanelEnv.XMax - pad;
+                            double yMin = floorY + pad;
+                            double yMax = ceilingY - pad;
+
+                            if (xMax > xMin && yMax > yMin)
+                            {
+                                var legendEnv = EnvelopeBuilderEx.CreateEnvelope(
+                                    new Coordinate2D(xMin, yMin),
+                                    new Coordinate2D(xMax, yMax));
+
+                                var legInfo = new LegendInfo() { MapFrameName = mapFrame.Name };
+                                var legendElm = ElementFactory.Instance.CreateMapSurroundElement(layout, legendEnv, legInfo) as Legend;
+
+                                if (legendElm != null)
+                                {
+                                    legendElm.SetVisible(true);
+                                    legendElm.SetName("Legend");
+
+                                    var cim = legendElm.GetDefinition() as CIMLegend;
+                                    if (cim != null)
+                                    {
+                                        cim.AutoAdd = true;
+                                        cim.AutoVisibility = true;
+
+                                        legendElm.SetDefinition(cim);
+                                    }
+                                }
+                            }
+                        }
+                        catch
+                        {
+                            //
+                        }
+                    }
+
+                    // Apply graticules AFTER camera is finalized
+                    LayoutGraticuleBuilder.Apply(options, mapFrame);
+
+                    return layout;
+                }
+                catch (Exception)
+                {
+                    return null;
+                }
+            });
+        }
+    }
 }
