@@ -1,1 +1,1492 @@
+using ActiproSoftware.Windows.Shapes;
+using ArcGIS.Core.Geometry;
+using ArcGIS.Desktop.Core;
+using ArcGIS.Desktop.Framework.Dialogs;
+using ArcGIS.Desktop.Framework.Threading.Tasks;
+using ArcGIS.Desktop.Internal.Framework.Win32;
+using ArcGIS.Desktop.Internal.Mapping;
+using ArcGIS.Desktop.Layouts;
+using ArcGIS.Desktop.Mapping;
+using BasemappingPro.maplayouts;
+using BasemappingPro.ui.maplayout;
+using BasemappingPro.ui.maplayout.calc;
+using BasemappingPro.utils;
+using System;
+using System.Collections;
+using System.Collections.Generic;
+using System.Collections.ObjectModel;
+using System.ComponentModel;
+using System.Data;
+using System.Diagnostics;
+using System.Globalization;
+using System.IO;
+using System.Linq;
+using System.Printing;
+using System.Runtime.CompilerServices;
+using System.Security.Policy;
+using System.Text;
+using System.Text.RegularExpressions;
+using System.Threading;
+using System.Threading.Tasks;
+
+namespace BasemappingPro.ui.maplayout
+{
+    public class BmMapLayoutVM : INotifyPropertyChanged
+    {
+        public BmMapLayoutVM()
+        {
+            // initialize scale grab
+            TryInitScaleFromCamera();
+            // Defaults for text
+            _pageSizeX = 8.5;
+            _pageSizeY = 11.0;
+            _pageSizeXText = FormatNum(_pageSizeX);
+            _pageSizeYText = FormatNum(_pageSizeY);
+            RefreshPipelineLayerCheck();
+            _ = RefreshPipelineLayerCheckAsync();
+
+
+            // Default logo selection = DOI Seal BOEM
+            _selectedLogoOption = LogoOptions.FirstOrDefault(lo => string.Equals(lo.Name, "DOI Seal BOEM", StringComparison.OrdinalIgnoreCase))
+                                  ?? LogoOptions.ElementAtOrDefault(3);
+
+            // Default graticule selection = Lat-Long Labels Only (your first entry)
+            _selectedGraticuleOption = GraticuleOptions.FirstOrDefault()
+                                       ?? new GraticuleOption { Index = 0, Name = "Lat-Long Labels Only", IncludesLatLong = true, IncludesXY = false };
+
+            OnPropertyChanged(nameof(SelectedLogoOption));
+            OnPropertyChanged(nameof(SelectedGraticuleOption));
+            OnPropertyChanged(nameof(IsLatLonIntervalEnabled));
+            OnPropertyChanged(nameof(IsXYIntervalEnabled));
+            OnPropertyChanged(nameof(FormatValue));
+            OnPropertyChanged(nameof(PageSizeYText));
+            OnPropertyChanged(nameof(PageSizeXText));
+            OnPropertyChanged(nameof(MapScaleText));
+            OnPropertyChanged(nameof(RelScaleText));
+
+            var current_region = BmRegionSelect.CurrentRegion;   
+            string region = current_region.ToString();
+
+            // Kick a format-based recompute once initialized
+            //ScheduleRecalc(RecalcOrigin.FormatChange);
+            _readyForUserRecalc = true;
+        }
+
+        public int FormatValue
+        {
+            get
+            {
+                if (FullPageChecked) return 3;
+                var name = _selectedLogoOption?.Name ?? string.Empty;
+                if (name.Equals("DOI Seal BOEM", StringComparison.OrdinalIgnoreCase) ||
+                    name.Equals("DOI Seal BSEE", StringComparison.OrdinalIgnoreCase))
+                    return 2;
+                return 1;
+            }
+        }
+
+        public event PropertyChangedEventHandler PropertyChanged;
+        protected void OnPropertyChanged(string propertyName)
+        {
+            if (PropertyChanged != null)
+            {
+                PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+            }
+        }
+        private bool _readyForUserRecalc = false;
+        private bool _sizeEdited = false;
+        private sealed class MapContext
+        {
+            public double MapWidth { get; init; }
+            public double MapHeight { get; init; }
+            public LinearUnit? Unit { get; init; }
+            public int UnitFactoryCode { get; init; }
+            public double ReferenceScale { get; init; }
+        }
+
+        private async Task<MapContext?> TryGetMapContextAsync()
+        {
+            return await QueuedTask.Run(() =>
+            {
+                var mv = MapView.Active;
+                if (mv == null || mv.Map == null || mv.Extent == null)
+                    return null;
+
+                var sr = mv.Map.SpatialReference;
+                var lu = sr?.Unit as LinearUnit;
+
+                return new MapContext
+                {
+                    MapWidth = mv.Extent.Width,
+                    MapHeight = mv.Extent.Height,
+                    Unit = lu,
+                    UnitFactoryCode = sr?.Unit?.FactoryCode ?? 0,
+                    ReferenceScale = mv.Map.ReferenceScale
+                };
+            });
+        }
+
+        private static double ToRelScale(double mapScale, bool isFeet) => isFeet ? (Math.Round(mapScale, 3) / 12.0) : (Math.Round(mapScale, 3) / 100.0);
+        private static double ToMapScale(double relScale, bool isFeet) => isFeet ? (Math.Round(relScale, 3) * 12.0) : (Math.Round(relScale, 3) * 100.0);
+        private static double ClampPositive(double v, double min = 0.001) => v < min ? min : v;
+
+        private static bool NearlyEqual(double a, double b, double eps = 1e-9) => Math.Abs(a - b) <= eps;
+
+        private void SetTextSilently(ref string backing, string newValue, string propertyName)
+        {
+            if (backing == newValue) return;
+            backing = newValue;
+            OnPropertyChanged(propertyName);
+        }
+
+        private bool _legendChecked = true;
+        private bool _overviewChecked = true;
+        private bool _fullPageChecked = false;
+        private bool _mapTitle1 = true;
+        private bool _mapTitle2 = true;
+        private bool _mapTitle3 = true;
+        private bool _mapTitle4 = true;
+        private bool _mapTitle5 = true;
+        private bool _mapComments = true;
+        private bool _isXYIntEnabled = false;
+        private bool _isLatLonEnabled = true;
+        private bool _pipelineToLayout = true;
+        private bool _pipelineToPrinter = false;
+
+        private bool? _prevLegendChecked;
+        private bool? _prevOverviewChecked;
+        private bool? _prevMapTitle1;
+        private bool? _prevMapTitle2;
+        private bool? _prevMapTitle3;
+        private bool? _prevMapTitle4;
+        private bool? _prevMapTitle5;
+        private bool? _prevMapComments;
+        private bool? _prevPipelineCheck;
+
+        private double _pageSizeX = 8.5;
+        private double _pageSizeY = 11.0;
+        private double _mapScale = 1.0;
+        private double _relScale = 1.0;
+
+        private string _pageSizeXText = "8.5";
+        private string _pageSizeYText = "11";
+        private string _mapScaleText = "";
+        private string _relScaleText = "";
+
+        private double legendX = 0.0;
+
+        private double pageSizeX = 0.0;
+        private double pageSizeY = MapLayoutConstants.DEFAULT_PAGE_HEIGHT;
+        private double mapSizeX = 0.0;
+        private double mapSizeY = 0.0;
+        private string pageSizeXY = null;
+        private string mapSizeXY = null;
+
+        private double mapXYratio = 1.0;
+
+        private double ratioScale = 1.0;
+        private double relativeScale = 1.0;
+
+        private double legendAreaPercent = MapLayoutConstants.legendAreaPercent;
+        private double legendAreaOffset = MapLayoutConstants.legendAreaOffset;
+        private double marginSz = MapLayoutConstants.marginSz;
+        private double gapSz = MapLayoutConstants.gapSz;
+        private double logoMarginPercent = MapLayoutConstants.logoMarginPercent;
+        private double logoMarginSz = MapLayoutConstants.logoHeight;
+
+        private double pageRatio = 1.0;
+        private string sizeScaleFlag;
+        public int layoutFormat
+        {
+            get; set;
+        }
+
+        public double PageSizeX => _pageSizeX;
+        public double PageSizeY => _pageSizeY;
+        public double MapScale => _mapScale;
+        public double RelScale => _relScale;
+
+        public double _latLonInterval = 0.5;
+        public double _xyInterval = 200000;
+        
+        private string _latLonFormatMask = "0.0###";
+        public string LatLonFormatMask
+        {
+            get => _latLonFormatMask;
+            set
+            {
+                if (value != _latLonFormatMask)
+                {
+                    _latLonFormatMask = value;
+                    OnPropertyChanged(nameof(LatLonFormatMask));
+                }
+            }
+        }
+
+        private string _xyFormatMask = "#,##0.0#";
+        public string XyFormatMask
+        {
+            get => _xyFormatMask;
+            set
+            {
+                if (value != _xyFormatMask)
+                {
+                    _xyFormatMask = value;
+                    OnPropertyChanged(nameof(XyFormatMask));
+                }
+            }
+        }
+
+        private bool _latLonUserSet = false;
+        private bool _xyUserSet = false;
+
+        public double LatLonInterval
+        {
+            get => _latLonInterval;
+            set
+            {
+                if (Math.Abs(value - _latLonInterval) < 1e-9) return;
+                _latLonInterval = value;
+                _latLonUserSet = true;
+                OnPropertyChanged(nameof(LatLonInterval));
+            }
+        }
+        public double XyInterval
+        {
+            get => _xyInterval;
+            set
+            {
+                if (Math.Abs(value - _xyInterval) < 1e-9) return;
+                _xyInterval = value;
+                _xyUserSet = true;
+                OnPropertyChanged(nameof(XyInterval));
+            }
+        }
+        private double GetPageAspectForFallback()
+        {
+            return (_pageSizeY > 0.0) ? (_pageSizeX / _pageSizeY) : (8.5 / 11.0);
+        }
+
+        public bool HasErrors
+        {
+            get
+            {
+                foreach (var kv in _errors)
+                {
+                    if (kv.Value is { Count: > 0 }) return true;
+                }
+                return false;
+            }
+        }
+
+        public event EventHandler<DataErrorsChangedEventArgs>? ErrorsChanged;
+
+        public IEnumerable GetErrors(string? propertyName)
+        {
+            if (string.IsNullOrEmpty(propertyName)) yield break;
+            if (_errors.TryGetValue(propertyName, out var list) && list is { Count: > 0 })
+            {
+                foreach (var err in list) yield return err;
+            }
+        }
+
+        private string _mapTitle1Text = MapView.Active.Map.Name;
+        private string _mapTitle2Text = "";
+        private string _mapTitle3Text = "";
+        private string _mapTitle4Text = "";
+        private string _mapTitle5Text = "";
+        public string MapTitle1
+        {
+            get => _mapTitle1Text;
+            set
+            {
+                if (value == _mapTitle1Text) return;
+                _mapTitle1 = !string.IsNullOrEmpty(value);
+                OnPropertyChanged(nameof(MapTitle1));
+            }
+        }
+
+        public string MapTitle2
+        {
+            get => _mapTitle2Text;
+            set
+            {
+                if (value == _mapTitle2Text) return;
+                _mapTitle2Text = value;
+                _mapTitle2 = !string.IsNullOrEmpty(value);
+                OnPropertyChanged(nameof(MapTitle2));
+            }
+        }
+        public string MapTitle3
+        {
+            get => _mapTitle3Text;
+            set
+            {
+                if (value == _mapTitle3Text) return;
+                _mapTitle3Text = value;
+                _mapTitle3 = !string.IsNullOrEmpty(value);
+                OnPropertyChanged(nameof(MapTitle3));
+            }
+        }
+        public string MapTitle4
+        {
+            get => _mapTitle4Text;
+            set
+            {
+                if (value == _mapTitle4Text) return;
+                _mapTitle4Text = value;
+                _mapTitle4 = !string.IsNullOrEmpty(value);
+                OnPropertyChanged(nameof(MapTitle4));
+            }
+        }
+        public string MapTitle5
+        {
+            get => _mapTitle5Text;
+            set
+            {
+                if (value == _mapTitle5Text) return;
+                _mapTitle5Text = value;
+                _mapTitle5 = !string.IsNullOrEmpty(value);
+                OnPropertyChanged(nameof(MapTitle5));
+            }
+        }
+
+        public string PageSizeXText
+        {
+            get => _pageSizeXText;
+            set
+            {
+                sizeScaleFlag = MapLayoutConstants.FLAG_X;
+                if (value == _pageSizeXText) return;
+
+                _pageSizeXText = value;
+                OnPropertyChanged(nameof(PageSizeXText));
+
+                if (ValidateNumber(nameof(PageSizeXText), value, out var x))
+                {
+                    _pageSizeX = ClampPositive(x);
+                    _sizeEdited = true;
+                    MaintainAspectInstant(isX: true);
+                    AfterPageXChanged();
+                }
+            }
+        }
+
+        public string PageSizeYText
+        {
+            get => _pageSizeYText;
+            set
+            {
+                sizeScaleFlag = MapLayoutConstants.FLAG_Y;
+                if (value == _pageSizeYText) return;
+
+                _pageSizeYText = value;
+                OnPropertyChanged(nameof(PageSizeYText));
+
+                if (ValidateNumber(nameof(PageSizeYText), value, out var y))
+                {
+                    _pageSizeY = ClampPositive(y);
+                    _sizeEdited = true;
+                    MaintainAspectInstant(isX: false);
+                    AfterPageYChanged();
+                }
+            }
+        }
+
+        public string PageSizeLabel => $"Page Size: {PageSizeXText} by {PageSizeYText} ";
+
+        public static string RelScaleLabel
+        {
+            get
+            {
+                var mv = MapView.Active;
+                var mvu = mv?.Map?.SpatialReference?.Unit as LinearUnit;
+                var mapUnit = mvu?.Name ?? "Unk";
+                if (mapUnit.ToString() == "Foot_US")
+                {
+                    return "(Feet)";
+                }
+                else if (mapUnit.ToString() == "Degree")
+                {
+                    return "(Deg)";
+                }
+                else
+                {
+                    return $"({mapUnit})";
+                }
+            }
+        }
+
+        public static string XYUnitLabel
+        {
+            get
+            {
+                var mv = MapView.Active;
+                var mvu = mv?.Map?.SpatialReference?.Unit as LinearUnit;
+                var mapUnit = mvu?.Name ?? "Unknown";
+                if (mapUnit.ToString() == "Foot_US")
+                {
+                    return "(inch)";
+                }
+                else if (mapUnit.ToString() == "Unknown")
+                {
+                    return "(unk)";
+                }
+                else if (mapUnit.ToString() == "Degree")
+                {
+                    return "(dd)";
+                }
+                else
+                {
+                    return "(cm)";
+                }
+            }
+        }
+
+        public string MapScaleText
+        {
+            get => _mapScaleText;
+            set
+            {
+                sizeScaleFlag = MapLayoutConstants.FLAG_RATIO;
+                if (value == _mapScaleText) return;
+                _mapScaleText = value;
+                OnPropertyChanged(nameof(MapScaleText));
+
+                if (ValidateNumber(nameof(MapScaleText), value, out var ms))
+                {
+                    _mapScale = ClampPositive(ms);
+                    var feet = IsFeetUnit(MapView.Active);
+                    _relScale = ClampPositive(ToRelScale(_mapScale, feet));
+                    SetTextSilently(ref _relScaleText, FormatNum(_relScale), nameof(RelScaleText));
+
+                    AfterMapScaleChanged();
+                    RecalculateIntervals();
+                }
+            }
+        }
+
+        public string RelScaleText
+        {
+            get => _relScaleText;
+            set
+            {
+                sizeScaleFlag = MapLayoutConstants.FLAG_RELATIVE;
+                if (value == _relScaleText) return;
+                _relScaleText = value;
+                OnPropertyChanged(nameof(RelScaleText));
+
+                if (ValidateNumber(nameof(RelScaleText), value, out var rs))
+                {
+                    _relScale = ClampPositive(rs);
+                    var feet = IsFeetUnit(MapView.Active);
+                    _mapScale = ClampPositive(ToMapScale(_relScale, feet));
+                    SetTextSilently(ref _mapScaleText, FormatNum(_mapScale), nameof(MapScaleText));
+
+                    AfterRelScaleChanged();
+                }
+            }
+        }
+
+        // ====== Unified recalculation pipeline ======
+
+        private CancellationTokenSource _recalcCts;
+        private Task _recalcTask = Task.CompletedTask;
+        private readonly object _recalcSync = new();
+
+        private enum RecalcOrigin { None, PageX, PageY, RatioScale, RelativeScale, FormatChange }
+        private RecalcOrigin _lastOrigin = RecalcOrigin.None;
+        private RecalcOrigin _lastUserEditOrigin = RecalcOrigin.None;
+
+        private const int RecalcDebounceMs = 120;
+
+        // Replaced record struct with a simple class for compatibility
+        private sealed class SizeScaleResult
+        {
+            public double PageX { get; }
+            public double PageY { get; }
+            public double MapScale { get; }
+            public double RelScale { get; }
+
+            public SizeScaleResult(double pageX, double pageY, double mapScale, double relScale)
+            {
+                PageX = pageX;
+                PageY = pageY;
+                MapScale = mapScale;
+                RelScale = relScale;
+            }
+        }
+
+        private void AfterPageXChanged() {
+            _lastUserEditOrigin = RecalcOrigin.PageX;
+            ScheduleRecalc(RecalcOrigin.PageX);
+        }
+        private void AfterPageYChanged() {
+            _lastUserEditOrigin = RecalcOrigin.PageY; 
+            ScheduleRecalc(RecalcOrigin.PageY); }
+        private void AfterMapScaleChanged() {
+            _lastUserEditOrigin = RecalcOrigin.RatioScale;
+            ScheduleRecalc(RecalcOrigin.RatioScale);
+        }
+        private void AfterRelScaleChanged() { 
+            _lastUserEditOrigin = RecalcOrigin.RelativeScale;
+            ScheduleRecalc(RecalcOrigin.RelativeScale);
+        }
+        private void AfterFormatChanged()
+        {
+            if (!_sizeEdited)
+                return;
+            ScheduleRecalc(RecalcOrigin.FormatChange);
+        }
+
+        private void ScheduleRecalc(RecalcOrigin origin)
+        {
+            if (!_readyForUserRecalc)
+                return;
+
+            lock (_recalcSync)
+            {
+                _lastOrigin = origin;
+                _recalcCts?.Cancel();
+                _recalcCts = new CancellationTokenSource();
+                var token = _recalcCts.Token;
+                _recalcTask = RunRecalcPipelineAsync(origin, token);
+            }
+        }
+
+        private async Task RunRecalcPipelineAsync(RecalcOrigin origin, CancellationToken ct)
+        {
+            try
+            {
+                await Task.Delay(RecalcDebounceMs, ct);
+                var format = FormatValue;
+                var result = await ComputeSizeScaleAsync(origin, format, ct);
+                if (ct.IsCancellationRequested) return;
+                ApplyRecalcResult(origin, result);
+            }
+            catch (OperationCanceledException) { }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine("Recalc error: " + ex.Message);
+            }
+        }
+
+        private void ApplyRecalcResult(RecalcOrigin origin, SizeScaleResult r)
+        {
+            _pageSizeX = r.PageX;
+            _pageSizeY = r.PageY;
+            _mapScale = r.MapScale;
+            _relScale = r.RelScale;
+
+            SetTextSilently(ref _pageSizeXText, FormatNum(_pageSizeX), nameof(PageSizeXText));
+            SetTextSilently(ref _pageSizeYText, FormatNum(_pageSizeY), nameof(PageSizeYText));
+
+            if (origin == RecalcOrigin.RatioScale || origin == RecalcOrigin.FormatChange)
+                SetTextSilently(ref _relScaleText, FormatNum(_relScale), nameof(RelScaleText));
+            if (origin == RecalcOrigin.RelativeScale || origin == RecalcOrigin.FormatChange)
+                SetTextSilently(ref _mapScaleText, FormatNum(_mapScale), nameof(MapScaleText));
+
+            OnPropertyChanged(nameof(PageSizeLabel));
+        }
+
+        private void MaintainAspectInstant(bool isX)
+        {
+            double aspect = (_pageSizeY > 0.0) ? (_pageSizeX / _pageSizeY) : (8.5 / 11.0);
+            if (aspect <= 0) aspect = 8.5 / 11.0;
+
+            if (isX)
+            {
+                _pageSizeY = ClampPositive(MiscUtil.RoundToDecimalD(_pageSizeX / aspect));
+                SetTextSilently(ref _pageSizeYText, FormatNum(_pageSizeY), nameof(PageSizeYText));
+            }
+            else
+            {
+                _pageSizeX = ClampPositive(MiscUtil.RoundToDecimalD(_pageSizeY * aspect));
+                SetTextSilently(ref _pageSizeXText, FormatNum(_pageSizeX), nameof(PageSizeXText));
+            }
+        }
+
+        private async Task<SizeScaleResult> ComputeSizeScaleAsync(RecalcOrigin origin, int layoutFormat, CancellationToken ct)
+        {
+            // Snapshot
+            double inputX = _pageSizeX;
+            double inputY = _pageSizeY;
+            double inputMapScale = _mapScale;
+            double inputRelScale = _relScale;
+
+            double margin = marginSz;
+            double gap = gapSz;
+            double legendPercent = legendAreaPercent;
+            double logoHeightBase = MapLayoutConstants.logoHeight;
+
+            // IMPORTANT FIX: remove ct from QueuedTask.Run call; still check ct inside
+            return await QueuedTask.Run(() =>
+            {
+                ct.ThrowIfCancellationRequested();
+
+                var mv = MapView.Active;
+                if (mv?.Map == null || mv.Extent == null)
+                {
+                    return new SizeScaleResult(inputX, inputY, inputMapScale, inputRelScale);
+                }
+
+                var map = mv.Map;
+                var srUnit = map.SpatialReference?.Unit as LinearUnit;
+                bool feet = srUnit != null && (srUnit.Name == "Foot_US" || Math.Abs(srUnit.MetersPerUnit - 0.305) < 1e-6);
+
+                double mapWidth = mv.Extent.Width;
+                double mapHeight = mv.Extent.Height;
+                if (mapWidth <= 0 || mapHeight <= 0)
+                    return new SizeScaleResult(inputX, inputY, inputMapScale, inputRelScale);
+
+                
+
+                double pageX = inputX;
+                double pageY = inputY;
+                double mapScale = inputMapScale;
+                double relScale = inputRelScale;
+                double legendXLocal = 0.0;
+                double logoMarginLocal = logoHeightBase;
+
+                double workingMargin = MapLayoutConstants.marginSz;
+                double workingGap = MapLayoutConstants.gapSz;
+                double workingLegendPercent = MapLayoutConstants.legendAreaPercent;
+                // Ground width/height in current SR units
+                double groundWidth = mv.Extent.Width;
+                double groundHeight = mv.Extent.Height;
+                if (groundWidth <= 0 || groundHeight <= 0)
+                    return new SizeScaleResult(inputX, inputY, inputMapScale, inputRelScale);
+
+                // Unit conversions: ground SR units -> expected SR units (per region) -> page units (cm/in)
+                int mapUnitFc = mv.Map.SpatialReference?.Unit?.FactoryCode ?? 0;
+                int srMapUnit = SpatialUtil.ESRI_UNIT_MAP_TO_SR_UNIT[mapUnitFc];
+                int expectedSrUnit = MiscUtil.SrUnitByRegion(srMapUnit);
+                int expectedPageUnit = MiscUtil.GetPageUnitByRegion(mapUnitFc);
+
+                // Convert ground dimension to expected SR units
+                double groundWidthExp = MiscUtil.RoundToDecimalD(MiscUtil.DistanceConversion(groundWidth, srMapUnit, expectedSrUnit));
+                double groundHeightExp = MiscUtil.RoundToDecimalD(MiscUtil.DistanceConversion(groundHeight, srMapUnit, expectedSrUnit));
+
+                double toPageFactor = 1.0;
+                if (expectedPageUnit == (int)ArcGIS.Core.CIM.esriUnits.esriCentimeters) toPageFactor = 100.0;
+                else if (expectedPageUnit == (int)ArcGIS.Core.CIM.esriUnits.esriInches) toPageFactor = 12.0;
+
+                double groundWidthPage = groundWidthExp * toPageFactor;
+                double groundHeightPage = groundHeightExp * toPageFactor;
+
+                double ratio = groundWidth / groundHeight;
+
+                void AdjustOffsets(double px, double py)
+                {
+                    double larger = Math.Max(px, py);
+                    double pageRatioLocal = MiscUtil.RoundToDecimalD(larger / 11.0);
+                    double coeff = 0.0;
+                    if (pageRatioLocal >= 7.0) coeff = MiscUtil.RoundToDecimalD(MapLayoutConstants.pageCoeff * pageRatioLocal * 7.5);
+                    else if (pageRatioLocal >= 6.0) coeff = MiscUtil.RoundToDecimalD(MapLayoutConstants.pageCoeff * pageRatioLocal * 6.5);
+                    else if (pageRatioLocal >= 5.0) coeff = MiscUtil.RoundToDecimalD(MapLayoutConstants.pageCoeff * pageRatioLocal * 5.5);
+                    else if (pageRatioLocal >= 4.0) coeff = MiscUtil.RoundToDecimalD(MapLayoutConstants.pageCoeff * pageRatioLocal * 4.5);
+                    else if (pageRatioLocal >= 3.0) coeff = MiscUtil.RoundToDecimalD(MapLayoutConstants.pageCoeff * pageRatioLocal * 3.5);
+                    else if (pageRatioLocal >= 2.5) coeff = MiscUtil.RoundToDecimalD(MapLayoutConstants.pageCoeff * pageRatioLocal * 2.5);
+                    else if (pageRatioLocal >= 2.0) coeff = MiscUtil.RoundToDecimalD(MapLayoutConstants.pageCoeff * pageRatioLocal * 2.0);
+                    else if (pageRatioLocal >= 1.5) coeff = MiscUtil.RoundToDecimalD(MapLayoutConstants.pageCoeff * pageRatioLocal * 1.5);
+
+                    workingLegendPercent = MapLayoutConstants.legendAreaPercent;
+                    workingMargin = MapLayoutConstants.marginSz + MapLayoutConstants.marginSz * coeff;
+                    workingGap = MapLayoutConstants.gapSz + MapLayoutConstants.gapSz * coeff;
+
+                    if (pageRatioLocal < 1.0)
+                    {
+                        workingMargin = MapLayoutConstants.marginSz * 0.5;
+                        workingGap = MapLayoutConstants.gapSz * 0.5;
+                    }
+                }
+
+                void ComputeFromY()
+                {
+                    double miny = workingMargin + workingMargin;
+                    double minx = workingMargin + workingMargin;
+                    double cx = 4.0 * workingMargin;
+                    double cy = (layoutFormat == 1) ? 4.0 * workingMargin : 2.0 * workingMargin;
+
+                    if (layoutFormat == 1)
+                    {
+                        double mapSizeYLocal = pageY - miny - cy - workingMargin;
+                        double mapSizeXLocal = mapSizeYLocal * ratio;
+                        pageX = (mapSizeXLocal + minx + 2.0 * workingMargin + cx) / (1 - workingLegendPercent);
+                        legendXLocal = pageX * workingLegendPercent + cx;
+                        AdjustOffsets(pageX, pageY);
+
+                        if (pageY > 11.0)
+                            logoMarginLocal = (pageY / 11.0) * MapLayoutConstants.logoHeight + workingMargin;
+                        else
+                            logoMarginLocal = MapLayoutConstants.logoHeight + workingMargin;
+                        cy = logoMarginLocal;
+
+                        mapSizeYLocal = pageY - miny - cy - workingMargin;
+                        mapSizeXLocal = mapSizeYLocal * ratio;
+                        pageX = (mapSizeXLocal + minx + 2.0 * workingMargin + cx) / (1 - workingLegendPercent);
+                        legendXLocal = pageX * workingLegendPercent + cx;
+                    }
+                    else if (layoutFormat == 2)
+                    {
+                        double mapSizeYLocal = pageY - miny - cy;
+                        double mapSizeXLocal = mapSizeYLocal * ratio;
+                        pageX = (mapSizeXLocal + minx + 2.0 * workingMargin + cx) / (1 - workingLegendPercent);
+                        legendXLocal = pageX * workingLegendPercent + cx;
+                        AdjustOffsets(pageX, pageY);
+
+                        mapSizeYLocal = pageY - miny - cy;
+                        mapSizeXLocal = mapSizeYLocal * ratio;
+                        pageX = (mapSizeXLocal + minx + 2.0 * workingMargin + cx) / (1 - workingLegendPercent);
+                        legendXLocal = pageX * workingLegendPercent + cx;
+                    }
+                    else if (layoutFormat == 3)
+                    {
+                        legendXLocal = 0.0;
+                        double mapSizeYLocal = pageY - miny - cy;
+                        double mapSizeXLocal = mapSizeYLocal * ratio;
+                        pageX = mapSizeXLocal + minx + legendXLocal + 2.0 * workingMargin;
+                        AdjustOffsets(pageX, pageY);
+
+                        mapSizeYLocal = pageY - miny - cy;
+                        mapSizeXLocal = mapSizeYLocal * ratio;
+                        pageX = mapSizeXLocal + minx + legendXLocal + 2.0 * workingMargin;
+                    }
+                }
+
+                void ComputeFromX()
+                {
+                    double miny = workingMargin + workingMargin;
+                    double minx = workingMargin + workingMargin;
+                    double cx = 4.0 * workingMargin;
+                    double cy = (layoutFormat == 1) ? 4.0 * workingMargin : 2.0 * workingMargin;
+
+                    if (layoutFormat == 1)
+                    {
+                        legendXLocal = pageX * workingLegendPercent + cx;
+                        double mapSizeXLocal = pageX - minx - legendXLocal - 2.0 * workingMargin;
+                        double mapSizeYLocal = mapSizeXLocal / ratio;
+                        pageY = mapSizeYLocal + miny + cy + workingMargin;
+                        AdjustOffsets(pageX, pageY);
+
+                        if (pageY > 11.0)
+                            logoMarginLocal = (pageY / 11.0) * MapLayoutConstants.logoHeight + workingMargin;
+                        else
+                            logoMarginLocal = MapLayoutConstants.logoHeight + workingMargin;
+                        cy = logoMarginLocal;
+
+                        legendXLocal = pageX * workingLegendPercent + cx;
+                        mapSizeXLocal = pageX - minx - legendXLocal - 2.0 * workingMargin;
+                        mapSizeYLocal = mapSizeXLocal / ratio;
+                        pageY = mapSizeYLocal + miny + cy + workingMargin;
+                    }
+                    else if (layoutFormat == 2)
+                    {
+                        legendXLocal = pageX * workingLegendPercent + cx;
+                        double mapSizeXLocal = pageX - minx - legendXLocal - 2.0 * workingMargin;
+                        double mapSizeYLocal = mapSizeXLocal / ratio;
+                        pageY = mapSizeYLocal + miny + cy;
+                        AdjustOffsets(pageX, pageY);
+
+                        legendXLocal = pageX * workingLegendPercent + cx;
+                        mapSizeXLocal = pageX - minx - legendXLocal - 2.0 * workingMargin;
+                        mapSizeYLocal = mapSizeXLocal / ratio;
+                        pageY = mapSizeYLocal + miny + cy;
+                    }
+                    else if (layoutFormat == 3)
+                    {
+                        legendXLocal = 0.0;
+                        double mapSizeXLocal = pageX - minx - legendXLocal - 2.0 * workingMargin;
+                        double mapSizeYLocal = mapSizeXLocal / ratio;
+                        pageY = mapSizeYLocal + miny + cy;
+                        AdjustOffsets(pageX, pageY);
+
+                        mapSizeXLocal = pageX - minx - legendXLocal - 2.0 * workingMargin;
+                        mapSizeYLocal = mapSizeXLocal / ratio;
+                        pageY = mapSizeYLocal + miny + cy;
+                    }
+                }
+
+                void ComputeFromScale(bool isRatioPath)
+                {
+                    if (isRatioPath)
+                    {
+                        mapScale = ClampPositive(mapScale);
+                        relScale = ClampPositive(feet ? mapScale / 12.0 : mapScale / 100.0);
+                    }
+                    else
+                    {
+                        relScale = ClampPositive(relScale);
+                        mapScale = ClampPositive(feet ? relScale * 12.0 : relScale * 100.0);
+                    }
+
+                    //double mapFrameX = mapWidth / mapScale;
+                    //double mapFrameY = mapHeight / mapScale;
+                    double mapFrameX = groundWidthPage / mapScale;
+                    double mapFrameY = groundHeightPage / mapScale;
+
+
+                    double miny = workingMargin + workingMargin;
+                    double minx = workingMargin + workingMargin;
+                    double cx = 4.0 * workingMargin;
+                    double cy = 2.0 * workingMargin;
+
+                    if (layoutFormat == 2)
+                    {
+                        pageY = mapFrameY + miny + cy;
+                        legendXLocal = mapFrameX * workingLegendPercent + cx;
+                        pageX = minx + mapFrameX + legendXLocal + 3.0 * workingMargin;
+                        AdjustOffsets(pageX, pageY);
+
+                        pageY = mapFrameY + miny + cy;
+                        legendXLocal = mapFrameX * workingLegendPercent + cx;
+                        pageX = minx + mapFrameX + legendXLocal + 3.0 * workingMargin;
+                    }
+                    else if (layoutFormat == 1)
+                    {
+                        cy = 4.0 * workingMargin;
+                        pageY = mapFrameY + miny + cy + workingMargin;
+                        legendXLocal = mapFrameX * workingLegendPercent + cx;
+                        pageX = minx + mapFrameX + legendXLocal + 3.0 * workingMargin;
+                        AdjustOffsets(pageX, pageY);
+
+                        if (pageY > 11.0)
+                            logoMarginLocal = (pageY / 11.0) * MapLayoutConstants.logoHeight + workingMargin;
+                        else
+                            logoMarginLocal = MapLayoutConstants.logoHeight + workingMargin;
+                        cy = logoMarginLocal;
+
+                        pageY = mapFrameY + miny + cy + workingMargin;
+                        legendXLocal = mapFrameX * workingLegendPercent + cx;
+                        pageX = minx + mapFrameX + legendXLocal + 3.0 * workingMargin;
+                    }
+                    else if (layoutFormat == 3)
+                    {
+                        legendXLocal = 0.0;
+                        cx = 4 * workingMargin;
+                        cy = 4 * workingMargin;
+                        pageY = mapFrameY + cy;
+                        pageX = mapFrameX + cx;
+                        AdjustOffsets(pageX, pageY);
+
+                        pageY = mapFrameY + cy;
+                        pageX = mapFrameX + cx;
+                    }
+                }
+
+                switch (origin)
+                {
+                    case RecalcOrigin.PageY:
+                        ComputeFromY();
+                        mapScale = ClampPositive(mv.Camera.Scale);
+                        relScale = ClampPositive(feet ? mapScale / 12.0 : mapScale / 100.0);
+                        break;
+
+                    case RecalcOrigin.PageX:
+                        ComputeFromX();
+                        mapScale = ClampPositive(mv.Camera.Scale);
+                        relScale = ClampPositive(feet ? mapScale / 12.0 : mapScale / 100.0);
+                        break;
+
+                    case RecalcOrigin.RatioScale:
+                        ComputeFromScale(isRatioPath: true);
+                        break;
+
+                    case RecalcOrigin.RelativeScale:
+                        ComputeFromScale(isRatioPath: false);
+                        break;
+
+                    case RecalcOrigin.FormatChange:
+                        if (_lastUserEditOrigin == RecalcOrigin.PageX)
+                        {
+                            ComputeFromX();
+                            mapScale = ClampPositive(mv.Camera.Scale);
+                            relScale = ClampPositive(feet ? mapScale / 12.0 : mapScale / 100.0);
+                        }
+                        else if (_lastUserEditOrigin == RecalcOrigin.PageY)
+                        {
+                            ComputeFromY();
+                            mapScale = ClampPositive(mv.Camera.Scale);
+                            relScale = ClampPositive(feet ? mapScale / 12.0 : mapScale / 100.0);
+                        }
+                        else
+                            ComputeFromScale(isRatioPath: true);
+
+                        mapScale = ClampPositive(mv.Camera.Scale);
+                        relScale = ClampPositive(feet ? mapScale / 12.0 : mapScale / 100.0);
+                        break;
+
+                    default:
+                        return new SizeScaleResult(inputX, inputY, inputMapScale, inputRelScale);
+                }
+
+                pageX = ClampPositive(MiscUtil.RoundToDecimalD(pageX));
+                pageY = ClampPositive(MiscUtil.RoundToDecimalD(pageY));
+                mapScale = ClampPositive(MiscUtil.RoundToDecimalD(mapScale));
+                relScale = ClampPositive(MiscUtil.RoundToDecimalD(relScale));
+
+                return new SizeScaleResult(pageX, pageY, mapScale, relScale);
+            });
+        }
+
+        // ====== END unified recalculation pipeline ======
+
+        private void TryInitScaleFromCamera()
+        {
+            var mv = MapView.Active;
+            var cam = mv?.Camera;
+            if (cam == null) return;
+
+            var ms = cam.Scale;
+            bool feet = IsFeetUnit(mv);
+
+            _mapScale = ClampPositive(ms);
+            _relScale = ClampPositive(feet ? ms / 12.0 : ms / 100.0);
+
+            _mapScaleText = FormatNum(_mapScale);
+            _relScaleText = FormatNum(_relScale);
+
+            OnPropertyChanged(nameof(MapScaleText));
+            OnPropertyChanged(nameof(RelScaleText));
+        }
+
+        private static bool IsFeetUnit(MapView mv)
+        {
+            var lu = mv?.Map?.SpatialReference?.Unit as LinearUnit;
+            if (lu == null) return false;
+            if (lu.Name == "Foot_US") return true;
+
+            var mpu = lu.MetersPerUnit;
+            return Math.Abs(mpu - 0.305) < 1e-6;
+        }
+
+        private static string FormatNum(double d) =>
+            d.ToString("0.###", CultureInfo.InvariantCulture);
+
+        private bool ValidateNumber(string propertyName, string? text, out double parsed)
+        {
+            parsed = 0;
+
+            ClearErrors(propertyName);
+
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                AddError(propertyName, "Value is required.");
+                return false;
+            }
+
+            if (!NumberPattern.IsMatch(text))
+            {
+                AddError(propertyName, "Enter a positive number with up to 3 decimal places.");
+                return false;
+            }
+
+            if (!double.TryParse(text, NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out var val))
+            {
+                AddError(propertyName, "Invalid number.");
+                return false;
+            }
+
+            if (val <= 0)
+            {
+                AddError(propertyName, "Value must be greater than 0.");
+                return false;
+            }
+
+            parsed = val;
+            return true;
+        }
+
+        private void AddError(string propertyName, string error)
+        {
+            if (!_errors.TryGetValue(propertyName, out var list))
+            {
+                list = new List<string>();
+                _errors[propertyName] = list;
+            }
+            list.Clear();
+            list.Add(error);
+            ErrorsChanged?.Invoke(this, new DataErrorsChangedEventArgs(propertyName));
+        }
+
+        private void ClearErrors(string propertyName)
+        {
+            if (_errors.Remove(propertyName))
+                ErrorsChanged?.Invoke(this, new DataErrorsChangedEventArgs(propertyName));
+        }
+
+        public bool AreLayoutAndOverviewEnabled => !FullPageChecked;
+
+        public bool MapCommentsEnabled
+        {
+            get => _mapComments;
+            set
+            {
+                if (value == _mapComments) return;
+                _mapComments = value;
+                OnPropertyChanged(nameof(MapCommentsEnabled));
+            }
+
+        }
+
+        private string _mapCommentsText = "";
+        public string MapCommentsText
+        {
+            get => _mapCommentsText;
+            set
+            {
+                if (_mapCommentsText == value) return;
+                _mapCommentsText = value;
+                OnPropertyChanged(nameof(MapCommentsText));
+            }
+        }
+
+        public bool MapTitleEnabled
+        {
+            get => _mapTitle1;
+            set
+            {
+                if (value == _mapTitle1) return;
+                _mapTitle1 = value;
+                _mapTitle2 = value;
+                _mapTitle3 = value;
+                _mapTitle4 = value;
+                _mapTitle5 = value;
+                OnPropertyChanged(nameof(MapTitleEnabled));
+            }
+
+        }
+
+        public bool LegendChecked
+        {
+            get => _legendChecked;
+            set
+            {
+                if (value == _legendChecked) return;
+                _legendChecked = value;
+                OnPropertyChanged(nameof(LegendChecked));
+            }
+        }
+
+        public bool OverviewChecked
+        {
+            get => _overviewChecked;
+            set
+            {
+                if (value == _overviewChecked) return;
+                _overviewChecked = value;
+                OnPropertyChanged(nameof(OverviewChecked));
+            }
+        }
+
+        public bool FullPageChecked
+        {
+            get => _fullPageChecked;
+            set
+            {
+                if (value == _fullPageChecked) return;
+                _fullPageChecked = value;
+                OnPropertyChanged(nameof(AreLayoutAndOverviewEnabled));
+                OnPropertyChanged(nameof(IsLogoComboEnabled));
+                OnPropertyChanged(nameof(FormatValue));
+
+                if (value)
+                {
+                    _prevLegendChecked = _legendChecked;
+                    _prevOverviewChecked = _overviewChecked;
+                    _prevMapTitle1 = _mapTitle1;
+                    _prevMapTitle2 = _mapTitle2;
+                    _prevMapTitle3 = _mapTitle3;
+                    _prevMapTitle4 = _mapTitle4;
+                    _prevMapTitle5 = _mapTitle5;
+                    _prevMapComments = _mapComments;
+                    _prevPipelineCheck = _pipelineLayerCheck;
+
+                    LegendChecked = false;
+                    OverviewChecked = false;
+                    MapTitleEnabled = false;
+                    MapCommentsEnabled = false;
+                    IsLogoComboEnabled = false;
+                    PipelineLayerCheck = false;  // added for disabling pipeline layer check when full page is checked
+
+
+                }
+                else
+                {
+                    if (_prevLegendChecked.HasValue) LegendChecked = _prevLegendChecked.Value;
+                    if (_prevOverviewChecked.HasValue) OverviewChecked = _prevOverviewChecked.Value;
+                    if (_prevMapTitle1.HasValue) MapTitleEnabled = _prevMapTitle1.Value;
+                    if (_prevMapTitle2.HasValue) MapTitleEnabled = _prevMapTitle2.Value;
+                    if (_prevMapTitle3.HasValue) MapTitleEnabled = _prevMapTitle3.Value;
+                    if (_prevMapTitle4.HasValue) MapTitleEnabled = _prevMapTitle4.Value;
+                    if (_prevMapTitle5.HasValue) MapTitleEnabled = _prevMapTitle5.Value;
+                    if (_prevMapComments.HasValue) MapCommentsEnabled = _prevMapComments.Value;
+                    if (_prevPipelineCheck.HasValue) PipelineLayerCheck = _prevPipelineCheck.Value; // added for re-enabling pipeline layer check
+                    IsLogoComboEnabled = true;
+                }
+                AfterFormatChanged();
+            }
+        }
+
+        protected bool SetProperty<T>(ref T field, T newValue, [CallerMemberName] string propertyName = null)
+        {
+            if (!Equals(field, newValue))
+            {
+                field = newValue;
+                PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+                return true;
+            }
+
+            return false;
+        }
+
+        public bool AreControlsEnabled => !FullPageChecked;
+        public bool AreSealAndLegendEnabled => !FullPageChecked;
+
+        private bool _pipelineLayerCheck;
+
+        public bool PipelineLayerCheck
+        {
+            get => _pipelineLayerCheck;
+
+            set => SetProperty(ref _pipelineLayerCheck, value, nameof(PipelineLayerCheck));
+        }
+
+        public void RefreshPipelineLayerCheck()
+        {
+            PipelineLayerCheck = ArePipelinesPresent();
+            OnPropertyChanged(nameof(PipelineLayerCheck));
+        }
+
+        private static bool IsPipelineLayerName(string? name)
+        {
+            if (string.IsNullOrEmpty(name)) return false;
+            var n = name.Trim().ToLowerInvariant();
+            return n.Equals("Pipelines", StringComparison.OrdinalIgnoreCase) ||
+                   n.Equals("Proposed Pipelines - Feature Service", StringComparison.OrdinalIgnoreCase) ||
+                   n.Equals("Large Oil and Gas Pipelines", StringComparison.OrdinalIgnoreCase) ||
+                   n.Equals("Large Oil and Gas Proposed", StringComparison.OrdinalIgnoreCase);
+        }
+        public bool ArePipelinesPresent()
+        {
+            var mapView = MapView.Active;
+            var map = mapView?.Map;
+            if (map == null) return false;
+
+            if (string.Equals(map.Name, "Pipelines", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+            var layers = map.GetLayersAsFlattenedList().OfType<FeatureLayer>();
+            var anyVisiblePipeline = layers.Any(l => l.IsVisible && IsPipelineLayerName(l.Name));
+            return anyVisiblePipeline;
+
+        }
+
+        //need to asynchronosly check for pipeline layers, synchronous one will miss and it's looking for the wrong thing
+        //pipelines are not stored in feature layers but in group layers then feature layer within the group layer
+        public async Task RefreshPipelineLayerCheckAsync()
+        {
+            var map = MapView.Active?.Map;
+
+            if (map == null)
+            {
+                PipelineLayerCheck = false;
+            }
+            else
+            {
+                //asynchronous check using pipleinelocator
+                var pipelineLayer = await PipelineLayerLocator.FindPipelineSourceLayerAsync(map, requireVisible: false);
+
+                PipelineLayerCheck = pipelineLayer != null;
+            }
+
+            OnPropertyChanged(nameof(PipelineLayerCheck));
+        }
+
+        //pipeline properties now changing
+        public bool PipelineToLayout
+        {
+            get => _pipelineToLayout;
+            set
+            {
+                if (_pipelineToLayout == value) return;
+                _pipelineToLayout = value;
+
+                if (value) _pipelineToPrinter = false;
+
+                OnPropertyChanged(nameof(PipelineToLayout));
+                OnPropertyChanged(nameof(PipelineToPrinter));
+            }
+        }
+
+        public bool PipelineToPrinter
+        {
+            get => _pipelineToPrinter;
+            set
+            {
+                if (_pipelineToPrinter == value) return;
+                _pipelineToPrinter = value;
+
+                if (value) _pipelineToLayout = false;
+
+                OnPropertyChanged(nameof(PipelineToPrinter));
+                OnPropertyChanged(nameof(PipelineToLayout));
+            }
+        }
+
+        public class GraticuleOption
+        {
+            public int Index { get; init; }
+            public string Name { get; init; } = "";
+            public bool IncludesLatLong { get; init; }
+            public bool IncludesXY { get; init; }
+        }
+
+        public ObservableCollection<GraticuleOption> GraticuleOptions { get; } =
+        new ObservableCollection<GraticuleOption>
+        {
+            new() {Index = 0, Name = "Lat-Long Labels Only", IncludesLatLong = true,  IncludesXY = false },
+            new() {Index = 1, Name = "Lat-Long Grid Line with Labels", IncludesLatLong = true,  IncludesXY = false },
+            new() {Index = 2, Name = "Lat-Long Grid Mark with Labels", IncludesLatLong = true,  IncludesXY = false },
+            new() {Index = 3, Name = "XY Grid Line with Labels", IncludesLatLong = false, IncludesXY = true  },
+            new() {Index = 4, Name = "XY Grid Mark with Labels", IncludesLatLong = false, IncludesXY = true  },
+            new() {Index = 5, Name = "Lat-Long Labels and XY Grid Mark", IncludesLatLong = true,  IncludesXY = true  },
+            new() {Index = 6, Name = "XY and Lat-Long Grid Marks", IncludesLatLong = true,  IncludesXY = true  },
+            new() {Index = 7, Name = "All Graticules and Labels", IncludesLatLong = true,  IncludesXY = true  },
+        };
+        private GraticuleOption? _selectedGraticuleOption;
+        public GraticuleOption? SelectedGraticuleOption
+        {
+            get => _selectedGraticuleOption;
+            set
+            {
+                if (_selectedGraticuleOption == value) return;
+                _selectedGraticuleOption = value;
+                OnPropertyChanged(nameof(SelectedGraticuleOption));
+                OnPropertyChanged(nameof(IsLatLonIntervalEnabled));
+                OnPropertyChanged(nameof(IsXYIntervalEnabled));
+            }
+        }
+
+        public bool IsLatLonIntervalEnabled => SelectedGraticuleOption?.IncludesLatLong ?? true;
+        public bool IsXYIntervalEnabled => SelectedGraticuleOption?.IncludesXY ?? false;
+
+        public class LogoOption
+        {
+            public string Name { get; init; } = "";
+        }
+        public ObservableCollection<LogoOption> LogoOptions { get; } =
+        new ObservableCollection<LogoOption>
+        {
+            new() { Name = "BOEM Logo"},
+            new() { Name = "BSEE Logo"},
+            new() { Name = "DOI Seal BSEE"},
+            new() { Name = "DOI Seal BOEM"},
+            new() { Name = "BOEM Logo in Legend"},
+            new() { Name = "BSEE Logo in Legend"},
+        };
+        private LogoOption? _selectedLogoOption;
+        public LogoOption? SelectedLogoOption
+        {
+            get => _selectedLogoOption;
+            set
+            {
+                if (_selectedLogoOption == value) return;
+                _selectedLogoOption = value;
+                OnPropertyChanged(nameof(SelectedLogoOption));
+                OnPropertyChanged(nameof(FormatValue));
+                AfterFormatChanged();
+            }
+        }
+        private bool _isLogoComboEnabled = true;
+
+        public bool IsLogoComboEnabled
+        {
+            get => _isLogoComboEnabled;
+            set
+            {
+                if (_isLogoComboEnabled == value) return;
+                _isLogoComboEnabled = value;
+                OnPropertyChanged(nameof(IsLogoComboEnabled));
+            }
+        }
+        private readonly Dictionary<string, List<string>> _errors = new();
+
+        private static readonly Regex NumberPattern = new(@"^[0-9]+(\.[0-9]{0,3})?$", RegexOptions.Compiled);
+
+        public void UpdateOffsets()
+        {
+
+            double larger = pageSizeX;
+            if (pageSizeY > larger)
+                larger = pageSizeY;
+
+            pageRatio = MiscUtil.RoundToDecimalD(larger / 11.0);
+
+            double pagelocalCoeff = 0;
+
+            if (pageRatio >= 7.0)
+                pagelocalCoeff = MiscUtil.RoundToDecimalD(MapLayoutConstants.pageCoeff * pageRatio * 7.5);
+
+            else if (pageRatio >= 6.0)
+                pagelocalCoeff = MiscUtil.RoundToDecimalD(MapLayoutConstants.pageCoeff * pageRatio * 6.5);
+
+            else if (pageRatio >= 5.0)
+                pagelocalCoeff = MiscUtil.RoundToDecimalD(MapLayoutConstants.pageCoeff * pageRatio * 5.5);
+
+            else if (pageRatio >= 4.0)
+                pagelocalCoeff = MiscUtil.RoundToDecimalD(MapLayoutConstants.pageCoeff * pageRatio * 4.5);
+
+            else if (pageRatio >= 3.0)
+                pagelocalCoeff = MiscUtil.RoundToDecimalD(MapLayoutConstants.pageCoeff * pageRatio * 3.5);
+            else if (pageRatio >= 2.5)
+                pagelocalCoeff = MiscUtil.RoundToDecimalD(MapLayoutConstants.pageCoeff * pageRatio * 2.5);
+
+            else if (pageRatio >= 2.0)
+                pagelocalCoeff = MiscUtil.RoundToDecimalD(MapLayoutConstants.pageCoeff * pageRatio * 2.0);
+
+            else if (pageRatio >= 1.5)
+                pagelocalCoeff = MiscUtil.RoundToDecimalD(MapLayoutConstants.pageCoeff * pageRatio * 1.5);
+
+            legendAreaPercent = MapLayoutConstants.legendAreaPercent;
+            legendAreaOffset = MapLayoutConstants.legendAreaOffset + MapLayoutConstants.legendAreaOffset * pagelocalCoeff;
+            marginSz = MapLayoutConstants.marginSz + MapLayoutConstants.marginSz * pagelocalCoeff;
+            gapSz = MapLayoutConstants.gapSz + MapLayoutConstants.gapSz * pagelocalCoeff;
+
+            if (pageRatio < 1.0)
+            {
+                legendAreaOffset = MapLayoutConstants.legendAreaOffset;
+                marginSz = MapLayoutConstants.marginSz * 0.5;
+                gapSz = MapLayoutConstants.gapSz * 0.5;
+            }
+
+            Console.WriteLine("Update Margin is now: " + marginSz + ", Gap: " + gapSz + ", Coeff: " + pagelocalCoeff);
+        }
+
+        public void ResetOffsets()
+        {
+            double pageCoeff = 0;
+
+            legendAreaPercent = MapLayoutConstants.legendAreaPercent;
+            legendAreaOffset = MapLayoutConstants.legendAreaOffset + MapLayoutConstants.legendAreaOffset * pageCoeff;
+            marginSz = MapLayoutConstants.marginSz + MapLayoutConstants.marginSz * pageCoeff;
+            gapSz = MapLayoutConstants.gapSz + MapLayoutConstants.gapSz * pageCoeff;
+
+            Console.WriteLine("Reset Margin is now: " + marginSz + ", Gap: " + gapSz + ", Coeff: " + pageCoeff);
+        }
+
+        public string GetPageSizeCaption()
+        {
+            SetPageSizeCaption();
+            return pageSizeXY;
+        }
+
+        public void SetPageSizeCaption()
+        {
+
+            string x = MiscUtil.RoundToDecimals(pageSizeX);
+            string y = MiscUtil.RoundToDecimals(pageSizeY);
+            pageSizeXY = MapLayoutConstants.PAGE_SIZE_STR + x + MapLayoutConstants.PAGE_SIZE_BY_STR + y;
+        }
+
+        public void RecalculateIntervals()
+        {
+            if (_mapScale <= 0) return;
+            if (!_xyUserSet)
+            {
+                var xy = MapLayoutGridCalculator.GetDefaultXYInterval(_mapScale);
+                _xyInterval = xy;
+                OnPropertyChanged(nameof(XyInterval));
+            }
+            if (!_latLonUserSet)
+            {
+                var ll = MapLayoutGridCalculator.GetDefaultLatLonInterval(_mapScale);
+                _latLonInterval = ll;
+                OnPropertyChanged(nameof(LatLonInterval));
+            }
+        }
+
+        public void InitializeIntervalsFromScale()
+        {
+            _latLonUserSet = false;
+            _xyUserSet = false;
+            RecalculateIntervals();
+        }
+
+        public void ResetIntervalOverrides()
+        {
+            _latLonUserSet = false;
+            _xyUserSet = false;
+            RecalculateIntervals();
+        }
+
+        public void UpdateMasksForGraticule(int index)
+        {
+            switch (index)
+            {
+                case 0:
+                case 1:
+                case 2:
+                    LatLonFormatMask = "0.0###";
+                    break;
+                case 3:
+                case 4:
+                    XyFormatMask = "#,##0.0#";
+                    break;
+                case 5:
+                    LatLonFormatMask = "0.0###";
+                    XyFormatMask = "#,##0.0#";
+                    break;
+                default:
+                    break;
+            }
+        }
+
+        // Removed legacy SizeScaleCalculator-dependent methods.
+        public LayoutRequest ToLayoutRequest()
+        {
+            // If your caption strings are not always computed, ensure SetPageSizeCaption() is called.
+            SetPageSizeCaption();
+            string scaleCaption = $"1:{FormatNum(_mapScale)}"; // or reuse your previous caption logic
+
+            var req = new LayoutRequest(
+                pageWidth: _pageSizeX,
+                pageHeight: _pageSizeY,
+                mapScaleRatio: _mapScale,
+                relativeScale: _relScale,
+                layoutFormat: FormatValue,
+                logoOption: SelectedLogoOption?.Name ?? "",
+                legendIncluded: LegendChecked,
+                overviewIncluded: OverviewChecked,
+                fullPage: FullPageChecked,
+                mapCommentsEnabled: MapCommentsEnabled,
+                mapCommentsText: MapCommentsText,
+                mapTitle1: MapTitle1,
+                mapTitle2: MapTitle2,
+                mapTitle3: MapTitle3,
+                mapTitle4: MapTitle4,
+                mapTitle5: MapTitle5,
+                pageSizeCaption: GetPageSizeCaption(),
+                scaleCaption: scaleCaption,
+                graticuleOption: SelectedGraticuleOption?.Name ?? "",
+                graticuleLatLon: IsLatLonIntervalEnabled,
+                graticuleXY: IsXYIntervalEnabled,
+                latLonInterval: LatLonInterval,
+                xyInterval: XyInterval,
+                pipelinesPresent: PipelineLayerCheck
+            );
+            // NEW: carry radio-button choice into request
+            req.PipelineToPrinter = this.PipelineToPrinter;
+
+            return req;
+
+
+        }
+
+
+    } // VM end bracket
+} // namespace end bracket
+
+
 
