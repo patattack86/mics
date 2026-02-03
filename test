@@ -1,1 +1,3467 @@
+Skip to content
+Chat history
+
+
+
+
+You said:
+sizescalecalculator.java
+File
+Hey ChatGPT.  We're working on our arcpro addin that we've been developing in these chats within this project. I think I have found a bug that has caused downstream errors, but we need to go over a couple files to be sure.  First, I want you to examine this sizescalecalculator.java file and walk me through step by step what its purpose is and what it does.  Here's the file 
+ChatGPT said:
+
+Thought for 3m 53s
+Got it — I pulled the file in and walked through it top-to-bottom. Here’s what SizeScaleCalculator.java is for, and what it does, step by step.
+
+What this class is responsible for
+SizeScaleCalculator is a layout math helper for the (old) ArcMap-based workflow. Its job is to take:
+
+the current map’s visible extent (from the active view),
+
+the map’s units (feet/meters/etc),
+
+a user input that represents either:
+
+a page size change (the user typed a page width or height), or
+
+a scale change (ratio scale or relative scale),
+
+and a layout format choice (logo / seal / full-page map),
+
+…and then compute consistent values for:
+
+pageSizeX, pageSizeY (the new page size, in page units)
+
+mapSizeX, mapSizeY (the map frame size inside the neatline)
+
+legend reserved width (legendX)
+
+margins/gaps (scaled up/down based on page size)
+
+ratioScale (the “1 : N” number, like 1:24000)
+
+relativeScale (a “1 inch = N feet/meters”-style number)
+
+plus some UI-friendly strings like pageSizeXY, mapSizeXY
+
+This is basically the “keep the map looking right while the user changes size/scale” engine.
+
+Key member variables (what it stores)
+Layout geometry outputs
+pageSizeX, pageSizeY → final page dimensions
+
+mapSizeX, mapSizeY → final map frame dimensions (inside the page/neatline)
+
+legendX → how much width is reserved for the legend area
+
+Inputs / context
+visibleEnv → the active view extent envelope (what the map is currently showing)
+
+mapXYratio → the aspect ratio of the current map extent (width / height)
+
+layoutFormat → 1/2/3 (logo / seal / full page map)
+
+Scale outputs
+ratioScale → the “N” part of 1:N
+
+relativeScale → relative “inch to ground” representation (converted based on units)
+
+Offsets derived from constants
+It starts from constants in MapLayoutConstants:
+
+legend area percent/offset
+
+margins, gaps
+
+logo height / logo margin percent
+
+…and then updateOffsets() dynamically scales those constants when the page gets big.
+
+The two “offset” helpers
+resetOffsets()
+Resets margin/gap/legend offsets back to the “baseline” values from MapLayoutConstants.
+
+Think: start from clean defaults before recomputing.
+
+updateOffsets()
+After a new page size is computed, this method adjusts margin/gap/legend offsets based on a derived pageRatio.
+
+Important detail:
+
+It takes the larger of pageSizeX and pageSizeY
+
+compares it to 11.0 (because 8.5x11 is treated as a baseline)
+
+then scales internal spacing constants up in steps (>=1.5, >=2.0, >=2.5, >=3.0, etc.)
+
+So on large sheets, margins and gaps expand to keep the layout readable.
+
+The core method: calculateSizeScale(String vdata, int layoutFormat)
+This is the main event.
+
+Step 1 — get ArcMap context + visible extent
+It grabs:
+
+IMxDocument mxDoc = (IMxDocument) app.getDocument()
+
+IMap focusMap = mxDoc.getFocusMap()
+
+IActiveView mapActiveView = (IActiveView) focusMap
+
+IEnvelope visibleEnv = mapActiveView.getExtent()
+
+So it’s using the current view extent as the thing to preserve.
+
+Step 2 — determine units and convert extent dimensions
+It determines map units, then picks an expected “page unit” and spatial reference unit:
+
+int mapUnit = focusMap.getMapUnits()
+
+expected_pageUnit = MiscUtil.getPageUnitByRegion(mapUnit)
+
+sr_mapunit = SpatialUtil.ESRI_UNIT_MAP_TO_SR_UNIT.get(mapUnit)
+
+expected_srUnit = MiscUtil.srUnitByRegion(sr_mapunit)
+
+Then it computes raw extent dimensions:
+
+mapWidth = visibleEnv.getWidth()
+
+mapHeight = visibleEnv.getHeight()
+
+And stores the aspect ratio:
+
+mapXYratio = mapWidth / mapHeight
+
+Then converts distances:
+
+mapWidth = distanceConversion(mapWidth, sr_mapunit, expected_srUnit)
+
+same for mapHeight
+
+Then it multiplies by a factor based on page units:
+
+if centimeters → * 100
+
+else if inches → * 12
+
+(So the intent is: convert map ground units into page units so later mapSize = mapWidth / scale works consistently.)
+
+Step 3 — reset layout offsets to baseline
+Before doing any page sizing:
+
+resetOffsets()
+
+This ensures margin/gap values are not “left over” from a previous calc.
+
+Step 4 — branch on what vdata represents
+There are two big modes:
+
+Mode A: vdata indicates a page size edit (X or Y)
+If the user typed a new page width or height, vdata is treated like a flag:
+
+FLAG_Y → user is controlling page height, solve for width
+
+FLAG_X → user is controlling page width, solve for height
+
+Inside each, it further branches by layoutFormat:
+
+layoutFormat == 1 (logo)
+Reserves extra top space for logo area and uses legend percent allocation.
+
+layoutFormat == 2 (seal)
+Similar but uses a “seal” geometry model (slightly different header space).
+
+layoutFormat == 3 (full page map only)
+No legend reservation (or reduced extras) and map consumes almost everything.
+
+In these branches the math pattern is basically:
+
+compute margins (minx, miny) from marginSz
+
+compute header/footer space (cx, cy) from margins + logo/seal constants
+
+compute legend reserved width:
+
+legendX = pageSizeX * legendAreaPercent + cx (conceptually)
+
+solve for map frame size:
+
+mapSizeX = pageSizeX - minx - legendX - (2 * marginSz)
+
+mapSizeY = mapSizeX / ratio (to preserve aspect ratio)
+
+then solve the other page dimension:
+
+pageSizeY = mapSizeY + miny + cy + ...
+
+After it computes the new page size, it calls:
+
+updateOffsets()
+…and in the logo branches, it recomputes logo margin size based on how tall the page is (scaled relative to 11”).
+
+Finally in this mode it also reads the current active view scale and populates scale fields:
+
+localratioScale = focusMap.getMapScale() (or from page layout active view)
+
+setRatioRelativeScale(localratioScale)
+
+So: if user edits page size, it keeps scale consistent with the view.
+
+Mode B: vdata indicates a scale edit (ratio or relative)
+If the user typed a scale instead of a size, it does:
+
+determine which kind:
+
+ratio (“1:N”) vs relative (“1 inch = X feet/meters”)
+
+convert between ratioScale and relativeScale using:
+
+feet case: 12 inches per foot
+
+metric case: 100 (?) conversion assumption (cm/m style)
+
+Then it derives map frame size directly from extent size and scale:
+
+mapSizeX = mapWidth / ratioScale
+
+mapSizeY = mapHeight / ratioScale
+
+Then (again) it chooses layoutFormat 1/2/3 and computes required page size around that map frame:
+
+add margins + legend area + header logo/seal allowances
+
+So: if user edits scale, it keeps extent coverage consistent, and grows/shrinks the page/mapframe to match.
+
+Two very likely “bug seeds” I see immediately
+Since you said “I think I found a bug that caused downstream errors,” these jumped out as high-probability culprits:
+
+1) String comparison using == instead of .equals(...)
+I see code like:
+
+if (getScaleIndicator() == MapLayoutConstants.RELATIVE_FEET)
+
+else if (vdata == MapLayoutConstants.FLAG_RATIO || vdata == MapLayoutConstants.FLAG_RELATIVE)
+
+In Java, == compares object references, not content. This will often “randomly work” in dev and then fail later depending on string interning and how the strings were constructed.
+
+That means:
+
+your units branch (feet vs meters) may be wrong sometimes
+
+your “scale mode vs size mode” may be wrong sometimes
+
+Those two mistakes absolutely can create “downstream errors” that look unrelated (wrong page size, wrong map frame, wrong legend allocation, wrong scale conversion).
+
+Fix pattern: replace == with .equals(...) or .equalsIgnoreCase(...) as appropriate.
+
+2) Mixed usage: sometimes equalsIgnoreCase, sometimes ==
+The file correctly uses:
+
+vdata.equalsIgnoreCase(MapLayoutConstants.FLAG_X)
+
+…but later uses vdata == MapLayoutConstants.FLAG_RATIO.
+
+So even if size-mode works reliably, scale-mode could silently fail and fall through (or not execute) depending on how vdata was built.
+
+Quick “mental model” of the whole class
+Extent → aspect ratio is the anchor.
+
+User edits size → solve mapframe + page while preserving ratio, then compute scale from view.
+
+User edits scale → solve mapframe from extent/scale, then wrap page around mapframe with margins/legend/header rules.
+
+Layout format changes how much “non-map” space is reserved (logo/seal/full page).
+
+Offsets are scaled up for big page sizes so the layout doesn’t look cramped.
+
+If you want, paste the specific bug you suspect (or tell me what downstream symptom you’re seeing in ArcPro), and I’ll point to the exact lines and propose a surgical fix list (and we can diff it against your ArcPro port).
+
+You said:
+SizeScalecalculator.cs
+File
+Awesome, now, I want you to evaluate this sizescalecalculator.cs file. would like you to assume the role of a senior software developer and evaluate this class in the same way as you did the java file.  Then, assess whether you think the behavior will be one to one the same between the files.  here's the file 
+ChatGPT said:
+
+Thought for 1m 10s
+Yep — I reviewed SizeScalecalculator.cs end-to-end. I’m going to treat this like a code review from a senior dev: what it’s intended to do, what it actually does, where it diverges from the Java, and whether you’ll get 1:1 behavior.
+
+What this C# class is trying to be
+This C# SizeScaleCalculator is clearly a port of the Java/ArcMap SizeScaleCalculator:
+
+It takes an active map extent (what the user is looking at)
+
+Converts that extent into some “page-friendly” units
+
+Then depending on vdata:
+
+user changed page width/height (FLAG_X / FLAG_Y), or
+
+user changed scale (FLAG_RATIO / FLAG_RELATIVE)
+
+It computes:
+
+pageSizeX/pageSizeY
+
+mapSizeX/mapSizeY (map frame size)
+
+legendX (reserved legend width)
+
+ratioScale + relativeScale
+
+and scales margins/gaps via ResetOffsets() and UpdateOffsets()
+
+So the purpose matches the Java file: preserve aspect ratio + allocate legend/header space + keep page/map frame consistent.
+
+Step-by-step: what it does (as written)
+1) Holds state for layout math
+It has the same core “outputs” as the Java version:
+
+pageSizeX, pageSizeY
+
+mapSizeX, mapSizeY
+
+legendX
+
+spacing constants copied from MapLayoutConstants (margin/gap/legend offsets)
+
+mapXYratio
+
+ratioScale, relativeScale
+
+dynamic logo margin sizing
+
+2) Reads the current map and extent (ArcGIS Pro)
+Inside calculateSizeScale(...):
+
+MapView mxDoc = MapView.Active;
+Map mapActiveView = mxDoc.Map;
+Envelope currentExtent = mxDoc.Extent;
+Map focusMap = mapActiveView;
+Envelope visibleEnv = currentExtent;
+So your “source of truth” for the map coverage is MapView.Active.Extent.
+
+✅ Conceptually aligned with Java.
+
+⚠️ Threading risk (more below).
+
+3) Attempts to determine units and convert the extent dimensions
+Here’s the biggest problem in the entire file:
+
+int mapUnit = (int)focusMap.ReferenceScale;
+int expected_pageUnit = MiscUtil.GetPageUnitByRegion(mapUnit);
+
+int sr_mapunit = SpatialUtil.ESRI_UNIT_MAP_TO_SR_UNIT[mapUnit];
+int expected_srUnit = MiscUtil.SrUnitByRegion(sr_mapunit);
+In the Java file, mapUnit is the map units (feet/meters/etc). In this C# file, mapUnit is set to ReferenceScale cast to int.
+
+That means:
+
+mapUnit is something like 24000 / 50000 / 250000 etc.
+
+It is not a valid key in ESRI_UNIT_MAP_TO_SR_UNIT
+
+So you’ll either:
+
+throw a KeyNotFoundException, or
+
+if your dictionary has a fallback (unlikely), you’ll do completely wrong conversions
+
+This is a hard divergence from the Java behavior and would absolutely create “downstream errors.”
+
+Then it does:
+
+double mapWidth = visibleEnv.Width;
+double mapHeight = visibleEnv.Height;
+
+SetMapXYratio(mapWidth / mapHeight);
+
+mapWidth = DistanceConversion(mapWidth, sr_mapunit, expected_srUnit);
+mapHeight = DistanceConversion(mapHeight, sr_mapunit, expected_srUnit);
+
+if (expected_pageUnit == esriCentimeters) { mapWidth *= 100; mapHeight *= 100; }
+else if (expected_pageUnit == esriInches) { mapWidth *= 12; mapHeight *= 12; }
+This matches the Java pattern, but because sr_mapunit/expected_srUnit/expected_pageUnit are derived from the wrong thing, the numeric results are not trustworthy.
+
+4) Resets offsets; then branches by what vdata means
+This part is structurally similar to Java:
+
+ResetOffsets();
+
+if (vdata.Equals(FLAG_X) || vdata.Equals(FLAG_Y)) {
+  if (FLAG_Y) { ... layoutFormat 1/2/3 ... SetRatioRelativeScale(localratioScale); }
+  else if (FLAG_X) { ... layoutFormat 1/2/3 ... SetRatioRelativeScale(localratioScale); }
+}
+else if (vdata == FLAG_RATIO || vdata == FLAG_RELATIVE) { ... }
+But there are two important mismatches here too:
+
+(A) String comparison bug still exists (like the Java bug)
+You fixed it in the size branch by using Equals(..., OrdinalIgnoreCase).
+
+But in the scale branch you reverted to Java’s problematic pattern:
+
+else if (vdata == MapLayoutConstants.FLAG_RATIO || vdata == MapLayoutConstants.FLAG_RELATIVE)
+{
+    if (vdata == MapLayoutConstants.FLAG_RATIO) ...
+    else if (vdata == MapLayoutConstants.FLAG_RELATIVE) ...
+}
+In C#, == for strings compares values (so it’s not the same trap as Java), but you’re now inconsistent with casing and culture handling. If vdata can come from UI/user input, "ratio" vs "RATIO" etc could break this branch. In Java you had “random failures”; in C# you’ll have “case failures”.
+
+So: not 1:1 behavior unless vdata is guaranteed to be exactly the constant string.
+
+(B) Scale-mode uses ratio scale even when “relative scale” chosen
+Even if FLAG_RELATIVE is chosen:
+
+scale = GetRelativeScale(); // sets local var
+...
+setMapSizeX(mapWidth / GetRatioScale());
+setMapSizeY(mapHeight / GetRatioScale());
+Notice it divides by GetRatioScale() regardless of which scale type was used. In Java, it used the internal ratioScale after converting between relative/ratio.
+
+Here, unless ratioScale has already been updated correctly, this can drift.
+
+ArcGIS Pro SDK correctness concerns (not in Java)
+1) Thread affinity / QueuedTask
+This method is async Task, but the code accesses a bunch of Pro objects directly:
+
+MapView.Active
+
+mxDoc.Extent
+
+mxDoc.Map
+
+map.SpatialReference.Unit... (in getScaleIndicator)
+
+In Pro SDK, many map/layout/geometry reads are fine, but it’s easy to hit “Must be called on MCT” issues depending on what you touch.
+
+Given you already made this async, I’d strongly recommend wrapping the “read map view / map / SR / extent” portion in:
+
+await QueuedTask.Run(() => { ... });
+…and store primitives (double/int) into locals for use outside.
+
+2) getScaleIndicator() is using == (bad port)
+In C#:
+
+if (getScaleIndicator() == MapLayoutConstants.RELATIVE_FEET)
+This is usually okay in C# because string == compares values, but again: casing/culture can bite you if getESRIUnit2Str(...) returns variants.
+
+Make it explicit:
+
+if (string.Equals(getScaleIndicator(), MapLayoutConstants.RELATIVE_FEET, StringComparison.OrdinalIgnoreCase))
+3) GetRatioScale() returns the camera scale but calculateSizeScale uses focusMap.ReferenceScale
+You have two different concepts in play:
+
+camera.Scale (actual current display scale)
+
+map.ReferenceScale (a map property that may be unset / 0 / not equal to camera)
+
+In Java/ArcMap, getMapScale() typically corresponds to the map’s current display scale.
+
+Your code sometimes uses:
+
+double localratioScale = focusMap.ReferenceScale;
+That’s not guaranteed to match camera.Scale.
+
+If you want Java-like behavior: use MapView.Active.Camera.Scale consistently as “current display scale”.
+
+Does it behave 1:1 with the Java file?
+No — not as written. There are at least three behavior-breaking divergences:
+
+1) Map units are wrong
+Java:
+
+mapUnit = focusMap.getMapUnits() (feet/meters/…)
+
+C#:
+
+mapUnit = (int)focusMap.ReferenceScale (scale, not units)
+
+This alone can cause:
+
+wrong conversions
+
+wrong page unit selection
+
+dictionary lookup exceptions
+
+totally incorrect mapSize/pageSize outputs
+
+2) Scale-flag branch may not be entered reliably
+Java had == string bugs.
+C# has mixed compare styles:
+
+size flags use Equals(...OrdinalIgnoreCase)
+
+scale flags use == (case sensitive)
+
+So if vdata isn’t perfectly controlled, you’ll get different paths than Java.
+
+3) Relative-scale path still divides by ratio scale
+In scale mode, it always uses GetRatioScale() for the division, even if the “relative” branch was chosen.
+
+The “likely bug causing downstream errors” (my best guess)
+If you’re seeing weird layout math later (wrong legend width, wrong page sizes, invalid extents, huge/small map frame), the smoking gun is:
+
+int mapUnit = (int)focusMap.ReferenceScale;
+int sr_mapunit = SpatialUtil.ESRI_UNIT_MAP_TO_SR_UNIT[mapUnit];
+That is almost certainly causing either:
+
+exceptions, or
+
+bad conversions that ripple everywhere.
+
+What I’d change immediately (surgical fixes)
+Fix 1 — use spatial reference units, not reference scale
+Replace the mapUnit block with something like:
+
+var srUnitCode = focusMap.SpatialReference?.Unit?.FactoryCode ?? 0;  // e.g., 9001 meters, 9002 feet, etc.
+int expected_pageUnit = MiscUtil.GetPageUnitByRegion(srUnitCode);
+
+int sr_mapunit = srUnitCode; // or map to your expected system if your helper expects ESRI unit enum
+int expected_srUnit = MiscUtil.SrUnitByRegion(sr_mapunit);
+Or, if your helper expects an ESRI “map unit enum” (like ArcMap did), you’ll need a mapping function in Pro.
+
+Fix 2 — unify vdata comparisons
+Do all comparisons like:
+
+if (vdata.Equals(MapLayoutConstants.FLAG_RATIO, StringComparison.OrdinalIgnoreCase)) ...
+Fix 3 — use camera scale consistently for “current scale”
+Inside calculateSizeScale:
+
+var localratioScale = mxDoc.Camera.Scale;
+SetRatioRelativeScale(localratioScale);
+…and in scale mode, if the user typed relative scale, convert it to ratioScale first then divide by that ratioScale (not by current camera scale).
+
+If you want, I can do the next step that will help you fastest: I’ll mark up the exact lines in your C# file that must change to be 1:1 with Java, and propose a corrected calculateSizeScale “Pro-safe” version (QueuedTask, unit handling, camera scale, and consistent flag logic).
+
+You said:
+awesome thanks so much chatGPT. we are currently having issues with our scale calculations, they are not exactly like the old java addin, I am indeed seeing weird math that doesnt make sense and leads to cascading effects downstream.  Would it help to see the code for the helper methods? If so, which helper methods would you want to see?
+ChatGPT said:
+
+Thought for a couple of seconds
+Yes — seeing the helper methods would help a lot, because right now the C# class has two “likely root causes” that live outside the file:
+
+Unit detection + conversion (this is the #1 suspect)
+
+Scale conversion logic (ratio ⇄ relative, feet/meters branching)
+
+If we validate those helpers, we can usually explain 90% of the “weird math” and why it cascades.
+
+The specific helper methods I want to see
+A) Unit + conversion pipeline (highest priority)
+These determine whether your extent widths/heights are being interpreted correctly.
+
+MiscUtil.GetPageUnitByRegion(int mapUnitOrSrUnit)
+
+This is currently being fed the wrong thing in your C# (ReferenceScale cast to int).
+
+I want to confirm what this method expects (map unit enum? EPSG unit code? something else?).
+
+MiscUtil.SrUnitByRegion(int sr_mapunit)
+
+Same reason: if this expects ArcMap-ish enums but you’re feeding Pro unit codes, you’ll get nonsense.
+
+SpatialUtil.ESRI_UNIT_MAP_TO_SR_UNIT (the dictionary contents / mapping)
+
+I want to see what the keys are supposed to be (ArcMap esriUnits enum values? WKIDs? custom codes?).
+
+DistanceConversion(double value, int fromUnit, int toUnit)
+
+This is the critical numeric transformation.
+
+If anything is inverted (multiply vs divide) or unit codes mismatch, you get exactly the kind of “scale math is wild” behavior you’re describing.
+
+SpatialUtil.getESRIUnit2Str(...) (or whatever backs getScaleIndicator())
+
+This decides whether you’re in “feet” vs “meters” logic.
+
+If this returns unexpected strings, your relative-scale conversions will be wrong.
+
+B) Scale interpretation and conversion (second priority)
+These determine whether “relative” and “ratio” are being turned into the same internal ratioScale like the Java.
+
+SetRatioRelativeScale(double localratioScale)
+
+This should set both ratioScale and relativeScale consistently based on unit type.
+
+GetRatioScale() and GetRelativeScale()
+
+I want to confirm whether they return stored values, or re-query Pro’s camera/reference scale, etc.
+
+getScaleIndicator()
+
+Especially how it decides feet vs meters (string compare, unit codes, etc.).
+
+C) Constants (quick check, but usually not the root)
+MapLayoutConstants values relevant to:
+
+RELATIVE_FEET, RELATIVE_METERS
+
+FLAG_X, FLAG_Y, FLAG_RATIO, FLAG_RELATIVE
+
+any of the legend/margin/logo percent constants that participate in formulas
+
+These won’t typically cause “scale is off,” but mismatched flags absolutely can cause you to go down the wrong branch and look like scale math is broken.
+
+One important note (so we don’t chase ghosts)
+I attempted to re-open earlier uploaded files via the file tool, and it indicates that some previously uploaded files have expired in the environment. So if you want me to review helpers, please paste them directly or re-upload the helper files.
+
+Fastest path to isolate the bug
+If you only upload two things first, make it these:
+
+DistanceConversion(...)
+
+MiscUtil.GetPageUnitByRegion(...) + MiscUtil.SrUnitByRegion(...) (in the same snippet)
+
+With those, I can tell you immediately whether your conversions can ever match the Java add-in, and what needs to change.
+
+Bonus: one tiny “instrumentation” snippet I’ll want next
+After we confirm helpers, I’ll likely ask for (or suggest) a quick logging dump right after extent conversion:
+
+raw extent width/height (map units)
+
+SR unit type
+
+converted width/height (expected_srUnit)
+
+after *100 or *12 adjustment
+
+the computed mapXYratio
+
+the scale used (Camera.Scale vs ReferenceScale)
+
+That will show exactly where the numbers go off the rails.
+
+Upload/paste the helpers above and I’ll do the same style of step-by-step evaluation and then tell you exactly why behavior diverges from Java and how to make it 1:1.
+
+You said:
+HelperMethods.cs
+File
+awesome, I've attached the helpers you mentiond in seciton A), lets review these, assess how they impact our sizescalecalculator.cs file and assess where we need to make changes so our math is correct.  assume the role of a senior software developer for this task
+ChatGPT said:
+
+Thought for 36s
+Perfect — these helpers explain exactly why your C# port can’t match the Java behavior right now. I’ll walk through what each helper is doing, how it plugs into SizeScaleCalculator.cs, and the concrete changes you should make so the math becomes stable (and “1:1” with the old add-in).
+
+1) What you actually have in the helpers (and why it matters)
+A) SpatialUtil.ESRI_UNIT_MAP_TO_SR_UNIT
+public static readonly Dictionary<int, int> ESRI_UNIT_MAP_TO_SR_UNIT = new()
+{
+  {(int)UnitTypeCode.Meters, (int)UnitTypeCode.Meters},
+  {(int)UnitTypeCode.Feet, (int)UnitTypeCode.Feet},
+  {(int)UnitTypeCode.FeetUS, (int)UnitTypeCode.FeetUS},
+  {(int)UnitTypeCode.Degrees, (int)UnitTypeCode.Degrees},
+  {(int)UnitTypeCode.Kilometers, (int)UnitTypeCode.Kilometers}
+};
+Reality: this is an identity map for ArcGIS.Core.Geometry.UnitTypeCode. It’s not converting between “map unit enum → SR unit id” the way ArcMap did — it’s basically a no-op mapping.
+
+✅ It’s harmless if you feed it UnitTypeCode.*.
+❌ It’s catastrophic if you feed it anything else (like ReferenceScale).
+
+B) MiscUtil.GetPageUnitByRegion(int mapUnit)
+This is very important: it is switching on EPSG / WKT unit factory codes, not UnitTypeCode.
+
+switch (mapUnit)
+{
+  case 9102: // degrees
+  case 9003: // us survey foot
+  case 9002: // international foot
+  case 9001: // meter
+    outUnit = region is ALS/ATL ? esriCentimeters : esriInches;
+    break;
+}
+✅ This expects values like 9001, 9002, 9003, 9102.
+❌ If you pass UnitTypeCode.Feet (different number) you’ll get -1.
+❌ If you pass ReferenceScale (24000) you’ll get -1.
+
+Impact downstream: your “multiply by 100” (cm) or “multiply by 12” (inches) block becomes wrong or never triggers properly.
+
+C) MiscUtil.DistanceConversion(double dist, int inUnit, int outUnit)
+This expects UnitTypeCode values (because you call LinearUnit.CreateLinearUnit(outUnit) where outUnit is a UnitTypeCode).
+
+It computes conversion factors (meters-per-unit) and does:
+
+outDist = dist * inFactor / outFactor;
+✅ If inUnit and outUnit are correct UnitTypeCodes, this math is fine.
+⚠️ Degrees are handled using METERS_PER_DEGREE (approx). That matches your Java strategy (it’s approximate, not geodesic).
+❌ If you pass EPSG codes like 9001 into CreateLinearUnit(9001) → that is not a UnitTypeCode and may throw or return wrong results.
+
+So: DistanceConversion wants UnitTypeCode, while GetPageUnitByRegion wants EPSG factory codes.
+
+That mismatch is the root of the confusion in your current C# port.
+
+D) SpatialUtil.getESRIUnit2Str(int inUnit)
+This expects EPSG factory codes again:
+
+9002 → feet
+
+9001 → meters
+
+9003 → feet
+
+9102 (degrees) → feet or meters depending on region
+
+✅ This should be driven by SpatialReference.Unit.FactoryCode, not UnitTypeCode.
+
+E) MiscUtil.SrUnitByRegion(int srmapUnit)
+This expects UnitTypeCode values:
+
+switch (srmapUnit)
+{
+  case UnitTypeCode.Degrees: return meters (ALS/ATL) else feet;
+  case UnitTypeCode.FeetUS: ...
+  case UnitTypeCode.Feet: ...
+  case UnitTypeCode.Meters: ...
+}
+✅ This should be driven by SpatialReference.Unit.UnitTypeCode (or equivalent), not EPSG codes.
+
+2) How this impacts SizeScaleCalculator.cs right now
+In your current SizeScaleCalculator.cs, the key bug is still:
+
+int mapUnit = (int)focusMap.ReferenceScale;
+int expected_pageUnit = MiscUtil.GetPageUnitByRegion(mapUnit);
+int sr_mapunit = SpatialUtil.ESRI_UNIT_MAP_TO_SR_UNIT[mapUnit];
+int expected_srUnit = MiscUtil.SrUnitByRegion(sr_mapunit);
+Why this explodes your math
+mapUnit is a scale like 24000, not a unit code.
+
+GetPageUnitByRegion(24000) returns -1 → page unit never resolves properly.
+
+ESRI_UNIT_MAP_TO_SR_UNIT[24000] → KeyNotFoundException OR you hack around it and get nonsense.
+
+If you “avoid the exception” somehow, sr_mapunit will be wrong → DistanceConversion will output nonsense → mapSize/pageSize gets nonsense → legend width gets nonsense → everything cascades.
+
+This matches your symptoms perfectly.
+
+3) What you need to change (so the math becomes correct)
+✅ Fix the unit pipeline by using two codes:
+You need both of these from the map’s spatial reference:
+
+EPSG unit factory code (9001/9002/9003/9102)
+Used for: GetPageUnitByRegion(...) and getESRIUnit2Str(...)
+
+ArcGIS Pro UnitTypeCode (Meters/Feet/FeetUS/Degrees…)
+Used for: SrUnitByRegion(...) and DistanceConversion(...)
+
+What to do in SizeScaleCalculator.calculateSizeScale(...)
+Replace the entire “mapUnit/expected unit” block with something like this:
+
+// (Run this on MCT with QueuedTask.Run if you touch Pro objects)
+var srUnit = focusMap.SpatialReference?.Unit;
+
+// 1) EPSG/WKT factory code (9001, 9002, 9003, 9102)
+int unitFactoryCode = srUnit?.FactoryCode ?? -1;
+
+// 2) Pro UnitTypeCode (Meters, Feet, Degrees, etc.)
+int unitTypeCode =
+    srUnit is ArcGIS.Core.Geometry.AngularUnit ? (int)ArcGIS.Core.Geometry.UnitTypeCode.Degrees :
+    srUnit is ArcGIS.Core.Geometry.LinearUnit lu ? (int)lu.UnitType :
+    -1;
+
+// Page units depend on region + factory code (your helper expects factory code)
+int expected_pageUnit = MiscUtil.GetPageUnitByRegion(unitFactoryCode);
+
+// Expected SR unit depends on region + UnitTypeCode (your helper expects UnitTypeCode)
+int expected_srUnit = MiscUtil.SrUnitByRegion(unitTypeCode);
+
+// Convert extent size from current SR units → expected SR units
+mapWidth  = MiscUtil.DistanceConversion(mapWidth,  unitTypeCode, expected_srUnit);
+mapHeight = MiscUtil.DistanceConversion(mapHeight, unitTypeCode, expected_srUnit);
+
+// Apply “page-friendly” multiplier based on region-selected page unit
+if (expected_pageUnit == (int)esriUnits.esriCentimeters)
+{
+    mapWidth  *= 100;
+    mapHeight *= 100;
+}
+else if (expected_pageUnit == (int)esriUnits.esriInches)
+{
+    mapWidth  *= 12;
+    mapHeight *= 12;
+}
+That change alone will remove the “weird math” and stop the cascade.
+
+Note: I can’t guarantee the exact properties (lu.UnitType etc.) without the rest of your codebase/types, but the idea is correct: FactoryCode drives region/page decisions; UnitTypeCode drives conversions.
+
+4) Fix getScaleIndicator() usage (or you’ll still diverge)
+Your scale logic depends on whether you’re “feet” or “meters”:
+
+In Java, it was based on map units / region.
+
+In your helpers, getESRIUnit2Str(int inUnit) expects factory code.
+
+So: anywhere you call getESRIUnit2Str(...) (directly or indirectly), make sure you pass:
+
+✅ focusMap.SpatialReference.Unit.FactoryCode
+❌ not UnitTypeCode
+❌ not ReferenceScale
+
+Otherwise you’ll classify feet vs meters incorrectly and your relative scale math will drift.
+
+5) One more subtle issue: GetPageUnitByRegion can return -1
+Right now GetPageUnitByRegion only handles: 9102, 9003, 9002, 9001.
+
+If your SR unit factory code is something else (it happens), you’ll get -1 and your page conversion block won’t run.
+
+Fix:
+Add a default fallback:
+
+If region is ALS/ATL → centimeters
+
+Else → inches
+
+That mirrors your intent everywhere else.
+
+6) DistanceConversion exception handling is too narrow
+You catch IOException, but LinearUnit.CreateLinearUnit(...) is far more likely to throw ArgumentException / ArcGISRuntimeException / etc.
+
+If that throws and you don’t catch it, you’ll get unpredictable failures.
+
+Fix:
+Catch broader exceptions (at least temporarily while diagnosing):
+
+catch (Exception e)
+{
+    Console.WriteLine(e);
+    return -99999;
+}
+(Then tighten later.)
+
+7) The “one-to-one” parity question
+With the changes above, you can get functionally 1:1 behavior with the Java add-in for the unit + extent conversion portion, which is the part currently causing the cascade.
+
+There may still be small differences due to:
+
+ArcGIS Pro camera scale vs reference scale (you should use MapView.Active.Camera.Scale for “current scale” like ArcMap did)
+
+degrees conversion being approximate (METERS_PER_DEGREE) rather than true geodesic (same as Java, so you’re fine)
+
+any remaining case sensitivity issues in flag checks
+
+But the big mismatch is absolutely this: you’re mixing scale, factory codes, and UnitTypeCodes.
+
+What I want next (so we can lock this down)
+To finish the job cleanly, I want to see the code in SizeScaleCalculator.cs where you currently compute:
+
+mapUnit, expected_pageUnit, sr_mapunit, expected_srUnit
+
+getScaleIndicator() implementation in the C# class (if it exists there)
+
+SetRatioRelativeScale(...) (because unit classification feeds into it)
+
+If you paste those specific sections, I’ll give you a precise diff-like set of edits so you can implement it quickly and verify with a single test extent + known expected scale.
+
+You said:
+awesome, can you review this code for sizescalecalculator.cs and help me make the changes you suggested. getScaleIndicator and SetRatiorelativescale scale are both in here, also, I made a comment on the portion of the code that sets mapunit, expected_pageunit, sr_mapunit and expected result.  Here's the code using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
+using ArcGIS.Core.Geometry;
+using ArcGIS.Core.Internal.CIM;
+using ArcGIS.Desktop.Internal.Framework.Win32;
+using ArcGIS.Desktop.Layouts;
+using ArcGIS.Desktop.Mapping;
+using ArcGIS.Desktop.Framework.Threading.Tasks;
+using BasemappingPro.maplayouts;
+using BasemappingPro;
+using BasemappingPro.utils;
+using ArcGIS.Core.CIM;
+using ArcGIS.Desktop.Core;
+using ArcGIS.Desktop.Framework.Dialogs;
+using System.Collections.ObjectModel;
+using System.ComponentModel;
+
+
+namespace BasemappingPro.maplayouts
+{
+    
+    public class SizeScaleCalculator
+    {
+        public SizeScaleCalculator() { }
+
+        private double currentPageSizeY = 0.0;
+        private double currentPageSizeX = 0.0;
+
+        // both are the visible bound of the active map in 
+        // page unit. One is current, one is future 
+
+        private ArcGIS.Core.Geometry.Envelope CurrentMapExtent = null;
+        private ArcGIS.Core.Geometry.Envelope visibleEnv = null;
+        // getting map frame envelope in page unit
+
+        private double legendX = 0.0;       // legend area width size
+
+        private double pageSizeX = 0.0;     // new X dimension for the map page size (inches)
+                                            // new Y dimension for the map page size (inches) with default value
+        private double pageSizeY = MapLayoutConstants.DEFAULT_PAGE_HEIGHT;
+        private double mapSizeX = 0.0;          // width of the new map frame in page unit
+        private double mapSizeY = 0.0;          // height of the new map frame in page unit
+        private string pageSizeXY = null;       // Internally calculated caption of the new page size for display into UI
+        private string mapSizeXY = null;        // Internally calculated caption of the new page size for display into UI
+
+        private double mapXYratio = 1.0;        // fitted bound of the map ratio
+
+        // Ratio scale is the map extent width divided by map frame width in the same unit
+        private double ratioScale = 1.0;    // Stores the 2nd half of the Ratio scale (i.e. 1: 20,555,946)
+        private double relativeScale = 1.0;// Stores the 2nd half of the relative scale (i.e. 1 inch = 2000 feet)
+
+        // these variables are adjusted local copies of the constants 
+        // defined in MapLayoutHeader file
+        // legend area size
+        private double legendAreaPercent = MapLayoutConstants.legendAreaPercent;
+        private double legendAreaOffset = MapLayoutConstants.legendAreaOffset;
+        // distance between second neat line to map frame and legend area
+        private double marginSz = MapLayoutConstants.marginSz;
+        // distance from legend area to items (top=bottom=right=left)
+        private double gapSz = MapLayoutConstants.gapSz;
+        // base line ratio of the logo area
+        private double logoMarginPercent = MapLayoutConstants.logoMarginPercent;
+        // to adjust for the logo area on the page layout
+        // offset from neatline to the top of the page
+        private double logoMarginSz = MapLayoutConstants.logoHeight;
+
+        private double pageRatio = 1.0;
+
+        //public double getPageRatio()
+        //{
+        //    return pageRatio;
+        //}
+
+        //public void setPageRatio(double pageRatio)
+        //{
+        //    this.pageRatio = pageRatio;
+        //}
+
+        //public ArcGIS.Core.Geometry.Envelope getVisibleEnv()
+        //{
+        //    return this.visibleEnv;
+        //}
+
+
+        /**
+         * saving map frame envelope in page unit
+         * @param env
+         */
+
+        //public void setVisibleEnv(ArcGIS.Core.Geometry.Envelope env)
+        //{
+        //    this.visibleEnv = env;
+        //}
+
+
+        //public double getCurrentPageSizeY()
+        //{
+        //    return currentPageSizeY;
+        //}
+
+        //public void setCurrentPageSizeY(double currentPageSizeY)
+        //{
+        //    this.currentPageSizeY = MiscUtil.RoundToDecimalD(currentPageSizeY);
+        //}
+
+        //public double getCurrentPageSizeX()
+        //{
+        //    return currentPageSizeX;
+        //}
+
+        //public void setCurrentPageSizeX(double currentPageSizeX)
+        //{
+        //    this.currentPageSizeX = MiscUtil.RoundToDecimalD(currentPageSizeX);
+        //}
+
+
+        //public ArcGIS.Core.Geometry.Envelope getCurrentMapExtent()
+        //{
+        //    return CurrentMapExtent;
+        //}
+
+
+        //public void setCurrentMapExtent(ArcGIS.Core.Geometry.Envelope currentMapExtent)
+        //{
+        //    CurrentMapExtent = currentMapExtent;
+        //}
+
+        public static ObservableCollection<String> _Seals = new ObservableCollection<String>(){"BOEM Logo", "BSEE Logo", "DOI Seal BSEE",
+            "DOI Seal BOEM", "BOEM Logo in Legend", "BSEE Logo in Legend" };
+
+        //public static ObservableCollection<String> GetSeals()
+        //{
+        //    return _Seals;
+        //}
+        
+        
+        
+
+        public static ObservableCollection<String> _Graticules = new ObservableCollection<String>() { "Lat-Long Labels Only", "Lat-Long Grid Line with Labels",
+            "Lat-Long Grid Mark with Labels", "XY Grid Line with Labels", "XY Grid Mark with Labels", "Lat-Long Labels and XY Grid Mark",
+            "XY and Lat-Long Grid Marks", "All Graticules and Labels" };
+
+        public SizeScaleCalculator(string vdata, int layoutFormat)
+        {
+            Vdata = vdata;
+            LayoutFormat = layoutFormat;
+        }
+
+        public string Vdata { get; }
+        public int LayoutFormat { get; }
+
+        public static ObservableCollection<String> GetGraticules()
+        {
+            return _Graticules;
+        }
+
+        /**
+         * Setter for member variable mvar_pageSizeX
+         * When user enters desired page size in X
+         * direction, this method sets and calls to
+         * calculate the page size in Y dimension.
+         * 
+         * @param mvar_pageSizeX
+         */
+
+        public void setPageSizeX(double _pageSizeX)
+        {
+            this.pageSizeX = MiscUtil.RoundToDecimalD(_pageSizeX);
+        }
+
+
+        /**
+         * Setter for member variable mvar_pageSizeY
+         * When user enters desired page size in Y
+         * direction, this method sets and calls to
+         * calculate the page size in X dimension.
+         * 
+         * @param mvar_pageSizeY
+         */
+        public void setPageSizeY(double _pageSizeY)
+        {
+            this.pageSizeY = MiscUtil.RoundToDecimalD(_pageSizeY);
+        }
+
+
+        /**
+         * Getter of the rounded off mvar_pageSizeX member variable 
+         * 
+         * @return pageSizeX
+         */
+        public double getPageSizeX()
+        {
+            return this.pageSizeX;
+        }
+
+
+        /**
+         * Getter of the rounded off mvar_pageSizeY member variable
+         * @return pageSizeY
+         */
+        public double getPageSizeY()
+        {
+            return this.pageSizeY;
+        }
+
+
+        public double getMapXYratio()
+        {
+            return this.mapXYratio;
+        }
+
+        /**
+	 * Setter for the map fitted width / map fitted height
+	 * @param vNewValue - the fitted bound ratio
+	 */
+        public void SetMapXYratio(double vNewValue)
+        {
+            this.mapXYratio = MiscUtil.RoundToDecimalD(vNewValue);
+            //if (TimsConstants.DEBUG)
+            //    System.out.println(file_name + "map ratio: " + this.mapXYratio);
+        }
+
+
+        /**
+         * Getter of the member variable mapSizeX which
+         * corresponds to X dimension of the data frame.
+         * @return mapSizeX
+         */
+        public double getMapSizeX()
+        {
+            return mapSizeX;
+        }
+
+
+        /**
+         * Setter for the member variable mvar_mapSizeX 
+         * 
+         * @param mvar_mapSizeX
+         */
+        public void setMapSizeX(double mvar_mapSizeX)
+        {
+            this.mapSizeX = MiscUtil.RoundToDecimalD(mvar_mapSizeX);
+        }
+
+
+        /**
+         * Getter of the member variable mvar_mapSizeY which
+         * corresponds to Y dimension of the data frame.
+         * @return mvar_mapSizeY
+         */
+        public double getMapSizeY()
+        {
+            return mapSizeY;
+        }
+
+
+        /**
+         * Setter for the member variable mvar_mapSizeY 
+         * 
+         * @param mvar_mapSizeY
+         */
+        public void setMapSizeY(double mvar_mapSizeY)
+        {
+            this.mapSizeY = MiscUtil.RoundToDecimalD(mvar_mapSizeY);
+        }
+
+
+
+        public double getLegendX()
+        {
+            return this.legendX;
+        }
+
+
+        public void setLegendX(double legendX)
+        {
+            this.legendX = MiscUtil.RoundToDecimalD(legendX);
+        }
+
+
+        public String getMapSizeXY()
+        {
+            return mapSizeXY;
+        }
+
+
+        public void setMapSizeXY(String mapSizeXY)
+        {
+            this.mapSizeXY = mapSizeXY;
+        }
+
+        /**
+         * Textual information (caption) regarding the current scale
+         * communicated through a label field to the user on the GUI
+         * @return the caption
+         */
+        public String getScaleCaption()
+        {
+
+            String captionScale = null;
+
+            if (ratioScale > 0)
+            {
+                //String ratio = MiscUtil.RoundToDecimals(ratioScale);
+                String ratio = GetRatioScale().ToString();
+                captionScale = MapLayoutConstants.SCALE_CAPTION + ratio;
+            }
+            else
+                captionScale = MapLayoutConstants.CANNOT_SCALE;
+
+            return captionScale;
+        }
+        public double GetMapScale()
+        {
+            //await QueuedTask.Run(() =>
+            //{
+                MapView activeView = MapView.Active;
+                if (activeView != null)
+                {
+                    Camera camera = activeView.Camera;
+
+                    double currentMapScale = Math.Round(camera.Scale,2);
+                    
+                //var mapScale = currentMapScale.ToString();
+                return currentMapScale;
+                }
+                else
+                {
+                    //MessageBox.Show(MapLayoutConstants.NOT_A_MAP);
+                return -99999.0;
+                }
+            //});
+        }
+        /**
+ * Returns an indicator of unit conversion
+ * @return indicator string - a pre defind value in MapLayoutHeader
+ */
+        public String getScaleIndicator()
+        {
+
+            // Get the active MapView
+            MapView pMxdoc = MapView.Active;
+            if (pMxdoc != null)
+            {
+                Map pActiveMap = pMxdoc.Map;
+
+                //IMxDocument pMxdoc = (IMxDocument)this.app.getDocument();
+                //IMap pActiveMap = pMxdoc.getFocusMap();
+                return MiscUtil.getESRIUnit2Str(pActiveMap.SpatialReference.Unit.FactoryCode);
+            }
+            else
+            {
+                System.Diagnostics.Debug.WriteLine("No active map view found.");
+                return null;
+            }
+        }
+
+
+        /**
+         * Setter of the member variables ratio and
+         * relative scales
+         * @param vdata - value to be set as the ratio scale
+         * @throws IOException 
+         * @throws AutomationException 
+         */
+        public double SetRatioRelativeScale(double vdata)
+        {
+
+            ratioScale = MiscUtil.RoundToDecimalD(vdata);
+            if (getScaleIndicator() == MapLayoutConstants.RELATIVE_FEET)
+            {
+                relativeScale = MiscUtil.RoundToDecimalD(ratioScale / 12.0);
+                return relativeScale;
+            }
+
+            else
+                relativeScale = MiscUtil.RoundToDecimalD(ratioScale / 100.0);
+            return relativeScale;
+        }
+
+
+        /**
+         * Getter of the member variable mvar_ratioScale which
+         * corresponds to 1: ??? on the user interface on the
+         * scale panel.
+         * 
+         * @return mvar_ratioScale
+         */
+        public double GetRatioScale()
+        {
+            //await QueuedTask.Run(() =>
+            //{
+                double scaleRatio;
+                MapView activeView = MapView.Active;
+                if (activeView != null)
+                {
+                    Camera camera = activeView.Camera;
+                    double scale = camera.Scale;
+                // round to 2 decimal places
+                scaleRatio = Math.Round(scale, 2);
+                }
+                else
+                {
+                scaleRatio = -99999.0;
+                    //MessageBox.Show(MapLayoutConstants.NOT_A_MAP);
+                    //MessageBox.Show("N/A");
+                }
+            //});
+            return scaleRatio;
+        }
+
+
+        /**
+         * Setter of the member variables relative and
+         * ratio scales
+         * @param vdata - value to be set as relative scale
+         * @throws IOException 
+         * @throws AutomationException 
+         */
+        public double SetRelativeRatioScale(double vdata)
+        {
+
+            relativeScale = MiscUtil.RoundToDecimalD(vdata);
+
+            if (getScaleIndicator() == MapLayoutConstants.RELATIVE_FEET)
+            {
+                ratioScale = MiscUtil.RoundToDecimalD(relativeScale * 12.0);
+                return ratioScale;
+            }
+            else
+                ratioScale = MiscUtil.RoundToDecimalD(relativeScale * 100.0);
+                return ratioScale;
+        }
+
+        /**
+         * Getter of the member variable mvar_relativeScale which
+         * corresponds to 1 inch = ??? on the user interface on the
+         * scale panel which is also equal to the ScaleText graphic
+         * on the page layout.
+         * 
+         * @return mvar_relativeScale
+         */
+        public double GetRelativeScale()
+        {
+            return relativeScale;
+        }
+
+
+        /**
+        * per new page adjust the offsets defined in
+        * MapLayoutHeader file. 
+*/
+        public void UpdateOffsets()
+        {
+
+            double larger = pageSizeX;
+            if (pageSizeY > larger)
+                larger = pageSizeY;
+
+            // Beheen 10/11/2012 - let's be consistent for calculating the ratios.
+            // (i.e. ratio = MiscUtil.RoundToDecimalD(Width / Height) all over in
+            // the application. However, due to key typed calculation of the page
+            // size, we should not use page size here and any other places until
+            // both sizes are updated. For example if a map page size is 8.5 x 11
+            // when user types a value for y, let's say 2 - the page size y becomes
+            // 2 when in this method while the page x still is 8.5. This gives a
+            // wrong ratio.		
+            // ESRI map sizes seems to be base lined for page size of 8.5x11
+            pageRatio = MiscUtil.RoundToDecimalD(larger / 11.0);
+
+            // let this be 0 - this is not same as the MapLayoutConstants.pageCoeff!
+            double pagelocalCoeff = 0;
+
+            if (pageRatio >= 7.0)
+                pagelocalCoeff = MiscUtil.RoundToDecimalD(MapLayoutConstants.pageCoeff * pageRatio * 7.5);
+
+            else if (pageRatio >= 6.0)
+                pagelocalCoeff = MiscUtil.RoundToDecimalD(MapLayoutConstants.pageCoeff * pageRatio * 6.5);
+
+            else if (pageRatio >= 5.0)
+                pagelocalCoeff = MiscUtil.RoundToDecimalD(MapLayoutConstants.pageCoeff * pageRatio * 5.5);
+
+            else if (pageRatio >= 4.0)
+                pagelocalCoeff = MiscUtil.RoundToDecimalD(MapLayoutConstants.pageCoeff * pageRatio * 4.5);
+
+            else if (pageRatio >= 3.0)
+                pagelocalCoeff = MiscUtil.RoundToDecimalD(MapLayoutConstants.pageCoeff * pageRatio * 3.5);
+            // relative to page size 8.5x11 adjust the constants
+            // such as gapSz and others offset by this coefficient
+            // To do: considering the pageRatio when page size gets larger
+            // than 3 times
+            else if (pageRatio >= 2.5)
+                pagelocalCoeff = MiscUtil.RoundToDecimalD(MapLayoutConstants.pageCoeff * pageRatio * 2.5);
+
+            else if (pageRatio >= 2.0)
+                pagelocalCoeff = MiscUtil.RoundToDecimalD(MapLayoutConstants.pageCoeff * pageRatio * 2.0);
+
+            else if (pageRatio >= 1.5)
+                pagelocalCoeff = MiscUtil.RoundToDecimalD(MapLayoutConstants.pageCoeff * pageRatio * 1.5);
+
+            // legend area size - not to be touched
+            // Note: do not use MiscUtil.RoundToDecimalD returns 0!
+            legendAreaPercent = MapLayoutConstants.legendAreaPercent;
+            legendAreaOffset = MapLayoutConstants.legendAreaOffset + MapLayoutConstants.legendAreaOffset * pagelocalCoeff;
+            // distance between second neat line to map frame and legend area
+            marginSz = MapLayoutConstants.marginSz + MapLayoutConstants.marginSz * pagelocalCoeff;
+            gapSz = MapLayoutConstants.gapSz + MapLayoutConstants.gapSz * pagelocalCoeff;
+
+            if (pageRatio < 1.0)
+            {
+                legendAreaOffset = MapLayoutConstants.legendAreaOffset;
+                // distance between second neat line to map frame and legend area
+                marginSz = MapLayoutConstants.marginSz * 0.5;
+                gapSz = MapLayoutConstants.gapSz * 0.5;
+            }
+
+            //if (TimsConstants.DEBUG) System.out.println(file_name + "Updated Margin: " + marginSz + ", Gap: " + gapSz + ", Coeff: " + pagelocalCoeff + ", Page Ratio: " + pageRatio);
+        }
+
+
+        /**
+         * per new page adjust the offsets defined in
+         * MapLayoutHeader file. 
+         */
+        public void ResetOffsets()
+        {
+
+
+            // let this be 0 - this is not same as the MapLayoutConstants.pageCoeff!
+            double pageCoeff = 0;
+
+            // legend area size - not to be touched
+            // Note: do not use MiscUtil.RoundToDecimalD returns 0!
+            legendAreaPercent = MapLayoutConstants.legendAreaPercent;
+            legendAreaOffset = MapLayoutConstants.legendAreaOffset + MapLayoutConstants.legendAreaOffset * pageCoeff;
+            // distance between second neat line to map frame and legend area
+            marginSz = MapLayoutConstants.marginSz + MapLayoutConstants.marginSz * pageCoeff;
+            gapSz = MapLayoutConstants.gapSz + MapLayoutConstants.gapSz * pageCoeff;
+
+            //if (TimsConstants.DEBUG) System.out.println(file_name + "Reseted Margin: " + marginSz + ", Gap: " + gapSz + ", Coeff: " + pageCoeff);
+        }
+
+
+        /**
+         * getting textual information (caption) regarding the current size
+         * communicated through a label field to the user on the GUI
+         * @return the caption
+         */
+        public String GetPageSizeCaption()
+        {
+            // this set is needed here because
+            // pageSizeXY is only set when calculating
+            // size which is not the case always.
+            string pageSizeXY = setPageSizeCaption();
+            return pageSizeXY;
+
+
+        }
+
+        public double GetLogoMarginPercent()
+        {
+            return logoMarginPercent;
+        }
+
+
+        public double GetGapSz()
+        {
+            return gapSz;
+        }
+
+
+        public double GetLegendAreaPercent()
+        {
+            return legendAreaPercent;
+        }
+
+
+        public double getLegendAreaOffset()
+        {
+            return legendAreaOffset;
+        }
+
+
+        public double getMarginSz()
+        {
+            return marginSz;
+        }
+
+
+
+        public double getLogoMarginSz()
+        {
+            return logoMarginSz;
+        }
+
+
+
+
+
+
+        /**
+         * setting textual information (caption) regarding the current size
+         * communicated through a label field to the user on the GUI
+         */
+        public string setPageSizeCaption()
+        {
+            //await QueuedTask.Run(() =>
+            //{
+                // check the page size limit
+                String x = MiscUtil.RoundToDecimals(pageSizeX);
+                String y = MiscUtil.RoundToDecimals(pageSizeY);
+                pageSizeXY = MapLayoutConstants.PAGE_SIZE_STR + x + MapLayoutConstants.PAGE_SIZE_BY_STR + y;
+            //});
+            return pageSizeXY;
+        }
+
+        /// <summary>
+        /// This method calculates page size and the map scale based on
+        /// the user input. The calculations depends on the user selected
+        /// format and user choice of page size in either X or Y direction
+        /// or user choice of standard page size, or user choice of map scale.
+        /// @param vdata - flags the user choice of size or scale
+        /// @param layoutFormat - flags the user choice of layout format.
+        /// There are 3 pre-defined types of layout at user's dispose:
+        /// 		flag 1 means that user wants a map layout that contains 
+        /// 		organization seal.
+        /// 		flag 2 means that user wants a map layout that contains
+        /// 		organization logo.
+        /// 		flag 3 means that user wants a map layout that contains
+        /// 		nothing but a full page map.
+        /// 
+        /// @throws IOException 
+        /// @throws AutomationException 
+        ///
+        ///</summary>
+
+        public async Task calculateSizeScale(String vdata, int layoutFormat)
+        {
+
+            //if(TimsConstants.DEBUG) System.out.println(file_name + "calculateSizeScale(), vdata: " + vdata + ", layout format: " + layoutFormat);
+
+            //IMxDocument mxDoc = (IMxDocument)this.app.getDocument();
+            //IMap focusMap = mxDoc.getFocusMap();
+            //IActiveView mapActiveView = (IActiveView)focusMap;
+            // Get the active MapView
+            MapView mxDoc = MapView.Active;
+            Map mapActiveView = mxDoc.Map;
+            ArcGIS.Core.Geometry.Envelope currentExtent = mxDoc.Extent;
+            // defining this because it seems like 
+            // getfocusmap is no longer used 
+            Map focusMap = mapActiveView;
+
+
+
+            //IMxDocument pMxdoc = (IMxDocument)this.app.getDocument();
+            //IMap pActiveMap = pMxdoc.getFocusMap();
+            //return MiscUtil.getESRIUnit2Str(pActiveMap.SpatialReference.Wkid);
+
+
+			///------------------Section that sets the units you were interested in-----------------------//
+			//mapUnit, expected_pageUnit, sr_mapunit, expected_srUnit
+            //get the current Map Extents
+            ArcGIS.Core.Geometry.Envelope visibleEnv = currentExtent;
+
+            int mapUnit = (int)focusMap.ReferenceScale;
+            //int mapUnit = focusMap.getMapUnits();
+            int expected_pageUnit = MiscUtil.GetPageUnitByRegion(mapUnit);
+
+            int sr_mapunit = SpatialUtil.ESRI_UNIT_MAP_TO_SR_UNIT[mapUnit];
+            int expected_srUnit = MiscUtil.SrUnitByRegion(sr_mapunit);
+
+
+            // holds the map width/height of the map frame in map unit
+            double mapWidth = visibleEnv.Width;//.getWidth();
+            double mapHeight = visibleEnv.Height; //.getHeight();
+
+
+            this.SetMapXYratio(mapWidth / mapHeight);
+            double ratio = this.mapXYratio;
+
+
+            mapWidth = MiscUtil.RoundToDecimalD(MiscUtil.DistanceConversion(mapWidth, sr_mapunit, expected_srUnit));
+            mapHeight = MiscUtil.RoundToDecimalD(MiscUtil.DistanceConversion(mapHeight, sr_mapunit, expected_srUnit));
+
+            if (expected_pageUnit == (int)ArcGIS.Core.CIM.esriUnits.esriCentimeters)
+            {
+                mapWidth *= 100;
+                mapHeight *= 100;
+            }
+            else if (expected_pageUnit == (int)ArcGIS.Core.CIM.esriUnits.esriInches)
+            {
+                mapWidth *= 12;
+                mapHeight *= 12;
+            }
+
+
+            // calculate the page size
+            ResetOffsets();
+
+            double lc = legendAreaPercent;
+            double cy = 2.1;
+            double cx = 2.1;
+            legendX = 0.0;
+
+            if (vdata.Equals(MapLayoutConstants.FLAG_X, StringComparison.OrdinalIgnoreCase) || vdata.Equals(MapLayoutConstants.FLAG_Y, StringComparison.OrdinalIgnoreCase))
+            {
+                // Calculate mapSizeX & Y and pageSizeX from the entered pageSizeY and the X/Y ratio
+                if (vdata.Equals(MapLayoutConstants.FLAG_Y, StringComparison.OrdinalIgnoreCase))
+                {
+                    //if (TimsConstants.DEBUG) System.out.println(file_name + "Y case");
+
+                    // with logo
+                    if (layoutFormat == 1)
+                    {
+
+                        double miny = marginSz + marginSz;
+                        double minx = marginSz + marginSz;
+
+                        cx = 4.0 * marginSz;
+                        cy = 4.0 * marginSz;
+
+                        setMapSizeY(pageSizeY - miny - cy - marginSz);
+                        setMapSizeX(mapSizeY * ratio);
+                        setPageSizeX((mapSizeX + minx + 2.0 * marginSz + cx) / (1 - lc));
+                        legendX = pageSizeX * lc + cx;
+                        UpdateOffsets();
+
+                        miny = marginSz + marginSz;
+                        minx = marginSz + marginSz;
+                        cx = 4.0 * marginSz;
+
+                        if (pageSizeY > 11.0)
+                            logoMarginSz = (pageSizeY / 11.0) * MapLayoutConstants.logoHeight + marginSz;
+                        else
+                            logoMarginSz = MapLayoutConstants.logoHeight + marginSz;
+                        cy = logoMarginSz;
+
+                        setMapSizeY(pageSizeY - miny - cy - marginSz);
+                        setMapSizeX(mapSizeY * ratio);
+                        setPageSizeX((mapSizeX + minx + 2.0 * marginSz + cx) / (1 - lc));
+                        legendX = pageSizeX * lc + cx;
+
+                    }  // end of Y format 1
+
+                    // with seal
+                    else if (layoutFormat == 2)
+                    {
+
+                        double miny = marginSz + marginSz;
+                        double minx = marginSz + marginSz;
+                        cx = 4.0 * marginSz;
+                        cy = 2.0 * marginSz;
+
+                        setMapSizeY(pageSizeY - miny - cy);
+                        setMapSizeX(mapSizeY * ratio);
+                        setPageSizeX((mapSizeX + minx + 2.0 * marginSz + cx) / (1 - lc));
+                        legendX = pageSizeX * lc + cx;
+
+
+                        UpdateOffsets();
+
+                        miny = marginSz + marginSz;
+                        minx = marginSz + marginSz;
+                        cx = 4.0 * marginSz;
+                        cy = 2.0 * marginSz;
+
+                        setMapSizeY(pageSizeY - miny - cy);
+                        setMapSizeX(mapSizeY * ratio);
+                        setPageSizeX((mapSizeX + minx + 2.0 * marginSz + cx) / (1 - lc));
+                        legendX = pageSizeX * lc + cx;
+
+                    } // end of Y format 2
+
+
+                    // full page map only
+                    else if (layoutFormat == 3)
+                    {
+
+                        double miny = marginSz + marginSz;
+                        double minx = marginSz + marginSz;
+                        cx = 4.0 * marginSz;
+                        cy = 2.0 * marginSz;
+                        legendX = 0.0;
+                        setMapSizeY(pageSizeY - miny - cy);
+                        mapSizeX = mapSizeY * ratio;
+                        setPageSizeX(mapSizeX + minx + legendX + 2.0 * marginSz);
+
+                        UpdateOffsets();
+
+                        miny = marginSz + marginSz;
+                        minx = marginSz + marginSz;
+                        cx = 4.0 * marginSz;
+                        cy = 2.0 * marginSz;
+                        legendX = 0.0;
+                        setMapSizeY(pageSizeY - miny - cy);
+                        mapSizeX = mapSizeY * ratio;
+                        setPageSizeX(mapSizeX + minx + legendX + 2.0 * marginSz);
+
+
+                    } // end of Y format 3
+
+                    // Calculate the map scale 
+                    double localratioScale = focusMap.ReferenceScale;//getMapScale();
+                    SetRatioRelativeScale(localratioScale);
+
+                }  // end of y flag
+
+                // Calculate mapSizeX & Y and pageSizeY from the entered pageSizeX and the X/Y ratio
+                else if (vdata.Equals(MapLayoutConstants.FLAG_X))
+                {
+                    //if (TimsConstants.DEBUG) System.out.println(file_name + "X case");
+
+                    // with logo
+                    if (layoutFormat == 1)
+                    {
+
+                        double miny = marginSz + marginSz;
+                        double minx = marginSz + marginSz;
+
+                        cx = 4.0 * marginSz;
+                        cy = 4.0 * marginSz;
+
+                        legendX = pageSizeX * lc + cx;
+                        setMapSizeX(pageSizeX - minx - legendX - 2.0 * marginSz);
+                        setMapSizeY(mapSizeX / ratio);
+                        setPageSizeY(mapSizeY + miny + cy + marginSz);
+                        UpdateOffsets();
+
+                        miny = marginSz + marginSz;
+                        minx = marginSz + marginSz;
+                        cx = 4.0 * marginSz;
+
+                        if (pageSizeY > 11.0)
+                            logoMarginSz = (pageSizeY / 11.0) * MapLayoutConstants.logoHeight + marginSz;
+                        else
+                            logoMarginSz = MapLayoutConstants.logoHeight + marginSz;
+                        cy = logoMarginSz;
+
+                        legendX = pageSizeX * lc + cx;
+                        setMapSizeX(pageSizeX - minx - legendX - 2.0 * marginSz);
+                        setMapSizeY(mapSizeX / ratio);
+                        setPageSizeY(mapSizeY + miny + cy + marginSz);
+
+                    }  // end of x format 1
+
+                    // with seal
+                    else if (layoutFormat == 2)
+                    {
+
+                        double miny = marginSz + marginSz;
+                        double minx = marginSz + marginSz;
+                        cx = 4.0 * marginSz;
+                        cy = 2.0 * marginSz;
+
+                        //legendX = pageSizeX - marginSz - maxx
+                        legendX = pageSizeX * lc + cx;
+                        setMapSizeX(pageSizeX - minx - legendX - 2.0 * marginSz);
+                        setMapSizeY(mapSizeX / ratio);
+                        setPageSizeY(mapSizeY + miny + cy);
+                        UpdateOffsets();
+
+                        miny = marginSz + marginSz;
+                        minx = marginSz + marginSz;
+                        cx = 4.0 * marginSz;
+                        cy = 2.0 * marginSz;
+                        legendX = pageSizeX * lc + cx;
+                        setMapSizeX(pageSizeX - minx - legendX - 2.0 * marginSz);
+                        setMapSizeY(mapSizeX / ratio);
+                        setPageSizeY(mapSizeY + miny + cy);
+
+                    } // end of X format 2
+
+                    // full page map only
+                    else if (layoutFormat == 3)
+                    {
+
+                        // full page map only	    			
+                        double miny = marginSz + marginSz;
+                        double minx = marginSz + marginSz;
+                        cx = 4.0 * marginSz;
+                        cy = 2.0 * marginSz;
+                        legendX = 0.0;
+                        setMapSizeX(pageSizeX - minx - legendX - 2.0 * marginSz);
+                        setMapSizeY(mapSizeX / ratio);
+                        setPageSizeY(mapSizeY + miny + cy);
+
+                        UpdateOffsets();
+
+                        miny = marginSz + marginSz;
+                        minx = marginSz + marginSz;
+                        cx = 4.0 * marginSz;
+                        cy = 2.0 * marginSz;
+                        legendX = 0.0;
+                        setMapSizeX(pageSizeX - minx - legendX - 2.0 * marginSz);
+                        setMapSizeY(mapSizeX / ratio);
+                        setPageSizeY(mapSizeY + miny + cy);
+
+                    } // end of format 3 X
+
+                    // Calculate the map scale while in page view
+                    //IActiveView activeView = mxDoc.getActiveView();
+                    //if (activeView instanceof IMap) {
+                    //    activeView = (IActiveView)mxDoc.getPageLayout();
+                    //}
+                    // Get the active MapView
+                    MapView pMxdoc = MapView.Active;
+                    if (pMxdoc != null)
+                    {
+                        Map activeView = pMxdoc.Map;
+                        //IActiveView activeView = mxDoc.getActiveView();
+                        if (activeView is Map)
+                        {
+                            //activeView = (Map)mxDoc.getPageLayout();
+                            LayoutProjectItem layoutItem = Project.Current.GetItems<LayoutProjectItem>().FirstOrDefault(item => item.Name.Equals(activeView.Name));
+                            Layout mapLayout = await QueuedTask.Run(() => layoutItem.GetLayout());
+                        }
+                        //double localratioScale = activeView.getFocusMap().getMapScale();
+                        double localratioScale = activeView.ReferenceScale; //.getMapScale();
+                        SetRatioRelativeScale(localratioScale);
+                    }  // end of x flag
+
+                }  // end of size flag
+
+                else if (vdata == MapLayoutConstants.FLAG_RATIO || vdata == MapLayoutConstants.FLAG_RELATIVE)
+                {
+                    // Calculate the map and page size from the entered scale
+                    double scale = 0.0;
+
+
+                    if (vdata == MapLayoutConstants.FLAG_RATIO)
+                    {
+                        //if (TimsConstants.DEBUG) System.out.println(file_name + "ratio case");
+                        scale = GetRatioScale();
+                    }
+                    else if (vdata == MapLayoutConstants.FLAG_RELATIVE)
+                    {
+                        //if (TimsConstants.DEBUG) System.out.println(file_name + "relative case");
+                        scale = GetRelativeScale();
+                    }
+
+
+
+                    setMapSizeX(mapWidth / GetRatioScale());
+                    setMapSizeY(mapHeight / GetRatioScale());
+
+
+                    if (layoutFormat == 2)
+                    {       // seal
+
+                        /* important: this must match the neatlineEnv in mapLyout
+                         * 									-----  FORMAT 2  ------							  (pageX,pageY)
+                        --------------------------------------------- page -----------------------------------------|
+                        |				mg or logo											mg or log								|
+                        |	------------------------- neatline -------------------------------------------------|	|
+                        |	|			mg									  (maxx,maxy)			mg			|	|
+                        |	|	|-------------------- map frame --------------------|	|--------legend-----|	|	|
+                        |	|	|													|	|					|	|	|
+                        |	|	|													|	|					|	|	|
+                        |	|	|													|	|					|	|	|
+                        |	|	|													|	|					|	|	|
+                        |	|	|													|	|					|	|	|
+                        |mg	|mg |												    |mg |				    |mg	|	|
+                        |	|	|													|	|					|	|	|
+                        |	|	|													|	|					|	|	|
+                        |	|	|													|	|					|	|	|
+                        |	|	|													|	|					|	|mg	|
+                        |	|	|													|	|					|	|	|
+                        |	|	|													|	|					|	|	|
+                        |	|	|													|	|					|	|	|
+                        |	|	|---------------------------------------------------|	|-------------------|	|	|
+                        |	|(minx,miny)				mg										mg				|	|
+                        |	|-----------------------------------------------------------------------------------|	|
+                        | 				mg										                mg					|
+                        |-------------------------------------------------------------------------------------------|
+                      (0,0)
+                         * 
+                         * In mapLayoutFactory - create()
+                         * adding neatline
+                         * neatlineEnv.putCoords(marginSz, marginSz, pageSizeX - marginSz, pageSizeY - marginSz);
+                         * 
+                         * In mapLayoutFactory - creat()
+                         * adding new map frame
+                         * double minx = this.neatlineEnv.getXMin() + marginSz;
+                         * double maxx = ssCalculator.getMapSizeX() + minx;
+                         * 
+                         * double miny = this.neatlineEnv.getYMin() + marginSz;
+                         * double maxy = this.neatlineEnv.getYMax() - marginSz;
+                         */
+
+                        // must map given values such that the above assumptions holds true
+                        // i.e. in this case mapSizeX and mapSizeY are given:
+
+                        double miny = marginSz + marginSz;
+                        double minx = marginSz + marginSz;
+                        cy = 2 * marginSz;
+
+                        //double maxx = mapSizeX + minx
+                        //pageSizeX = mapSizeX + minx
+                        //double maxy = mapSizeY + miny = pageSizeY - logoMarginSz - marginSz;
+                        //double mapSizeY = maxy - miny;
+                        //pageSizeY = maxy + logoMarginSz + marginSz = mapSizeY + miny + logoMarginSz + marginSz
+                        // 
+                        //legendBorderEnv.putCoords(maxx + totalTableArea + marginSz, miny, pageSizeX - marginSz, maxy)
+                        //legendBorderEnv.putCoords(maxx + marginSz, miny, pageSizeX - marginSz, maxy)
+                        // legendX = pageSizeX - marginSz - maxx
+                        //pageSizeX = minx + mapSizeX + legendX + 3.0 * marginSz
+                        setPageSizeY(mapSizeY + miny + cy);
+                        legendX = mapSizeX * lc + cx;
+                        setPageSizeX(minx + mapSizeX + legendX + 3.0 * marginSz);
+                        UpdateOffsets();
+                        miny = marginSz + marginSz;
+                        minx = marginSz + marginSz;
+                        cy = 2 * marginSz;
+
+                        setPageSizeY(mapSizeY + miny + cy);
+                        legendX = mapSizeX * lc + cx;
+                        setPageSizeX(minx + mapSizeX + legendX + 3.0 * marginSz);
+
+                    }       // seal
+
+
+                    else if (layoutFormat == 1)
+                    {       // logo
+
+                        double miny = marginSz + marginSz;
+                        double minx = marginSz + marginSz;
+                        //double maxx = mapSizeX + minx
+                        //pageSizeX = mapSizeX + minx
+                        //double maxy = mapSizeY + miny = pageSizeY - logoMarginSz - marginSz;
+                        //double mapSizeY = maxy - miny;
+                        //pageSizeY = maxy + logoMarginSz + marginSz = mapSizeY + miny + logoMarginSz + marginSz
+                        // 
+                        //legendBorderEnv.putCoords(maxx + totalTableArea + marginSz, miny, pageSizeX - marginSz, maxy)
+                        //legendBorderEnv.putCoords(maxx + marginSz, miny, pageSizeX - marginSz, maxy)
+                        //
+                        //pageSizeX = minx + mapSizeX + legendX + 3.0 * marginSz
+                        setPageSizeY(mapSizeY + miny + cy + marginSz);
+                        legendX = mapSizeX * lc + cx;
+                        setPageSizeX(minx + mapSizeX + legendX + 3.0 * marginSz);
+                        UpdateOffsets();
+
+                        if (pageSizeY > 11.0)
+                            logoMarginSz = (pageSizeY / 11.0) * MapLayoutConstants.logoHeight + marginSz;
+                        else
+                            logoMarginSz = MapLayoutConstants.logoHeight + marginSz;
+
+                        miny = marginSz + marginSz;
+                        minx = marginSz + marginSz;
+                        cy = logoMarginSz;
+                        setPageSizeY(mapSizeY + miny + cy + marginSz);
+                        legendX = mapSizeX * lc + cx;
+                        setPageSizeX(minx + mapSizeX + legendX + 3.0 * marginSz);
+                    }
+
+
+                    else if (layoutFormat == 3)
+                    {       // full map
+                        legendX = 0.0;
+                        cx = 4 * marginSz;
+                        cy = 4 * marginSz;
+                        setPageSizeY(mapSizeY + cy);
+                        setPageSizeX(mapSizeX + cx);
+
+                        UpdateOffsets();
+
+                        cx = 4 * marginSz;
+                        cy = 4 * marginSz;
+                        setPageSizeY(mapSizeY + cy);
+                        setPageSizeX(mapSizeX + cx);
+                    }
+                }  // end of scale flag
+
+                // prepare the captions
+                //setPageSizeCaption();
+
+            } // end of calculate
+
+        }
+    }
+    public class Seals
+    {
+        public List<string> SealType { get; }
+
+        public Seals()
+        {
+
+            SealType = new List<string>
+            {
+              "BOEM Logo",
+            "BSEE Logo",
+            "DOI Seal BSEE",
+            "DOI Seal BOEM",
+            "BOEM Logo in Legend",
+            "BSEE Logo in Legend"
+
+            };
+        }
+
+       
+        }
+    public class Graticules
+    {
+        //public List<string> GraticuleType { get; }
+
+        //public Graticules()
+        //{
+
+        //    GraticuleType = new List<string>
+        //    {
+        //      "Lat-Long Labels Only", "Lat-Long Grid Line with Labels",
+        //      "Lat-Long Grid Mark with Labels", "XY Grid Line with Labels",
+        //      "XY Grid Mark with Labels", "Lat-Long Labels and XY Grid Mark",
+        //      "XY and Lat-Long Grid Marks", "All Graticules and Labels"
+
+        //    };
+        //}
+
+        public enum GraticuleType
+        {
+            [Description("Lat-Long Labels Only")]
+            LatLongLabelsOnly,
+
+            [Description("Lat-Long Grid Line with Labels")]
+            LatLongGridLineWithLabels,
+
+            [Description("Lat-Long Grid Mark with Labels")]
+            LatLongGridMarkWithLabels,
+
+            [Description("XY Grid Line with Labels")]
+            XYGridLineWithLabels,
+
+            [Description("XY Grid Mark with Labels")]
+            XYGridMarkWithLabels,
+
+            [Description("Lat-Long Labels and XY Grid Mark")]
+            LatLongLabelsAndXYGridMark,
+
+            [Description("XY and Lat-Long Grid Marks")]
+            XYAndLatLongGridMarks,
+
+            [Description("All Graticules and Labels")]
+            AllGraticulesAndLabels
+        }
+    }
+
+    }
+ChatGPT said:
+
+Thought for 12s
+Yep — this code confirms the exact failure modes we suspected, and there are three “root” issues causing the scale math to diverge (and cascade).
+
+I’ll go in “senior dev review” mode: what’s broken, why, and exact edits to make the behavior match the old Java add-in.
+
+1) Critical problems in your current SizeScaleCalculator.cs
+Problem A — You’re still using ReferenceScale as “map units”
+In your “units section”:
+
+int mapUnit = (int)focusMap.ReferenceScale;
+int expected_pageUnit = MiscUtil.GetPageUnitByRegion(mapUnit);
+int sr_mapunit = SpatialUtil.ESRI_UNIT_MAP_TO_SR_UNIT[mapUnit];
+int expected_srUnit = MiscUtil.SrUnitByRegion(sr_mapunit);
+This is guaranteed to be wrong because:
+
+ReferenceScale is a scale value (e.g., 24000)
+
+GetPageUnitByRegion() expects unit factory codes (9001, 9002, 9003, 9102)
+
+SrUnitByRegion() expects UnitTypeCode (Feet, Meters, Degrees…)
+
+ESRI_UNIT_MAP_TO_SR_UNIT expects UnitTypeCode keys
+
+So you’re feeding 24000 into functions expecting unit identifiers → you get wrong page units, wrong SR units, bad conversions, or exceptions.
+
+✅ Fix: derive two unit codes from the SpatialReference:
+
+FactoryCode (9001/9002/9003/9102) → drives GetPageUnitByRegion() and getESRIUnit2Str()
+
+UnitTypeCode (Meters/Feet/FeetUS/Degrees…) → drives DistanceConversion() and SrUnitByRegion()
+
+Problem B — getScaleIndicator() comparisons are using ==
+You have:
+
+if (getScaleIndicator() == MapLayoutConstants.RELATIVE_FEET)
+In C#, == compares string values but you’re still inviting mismatches (casing, nulls, future refactors). And you use StringComparison.OrdinalIgnoreCase elsewhere, so be consistent.
+
+✅ Fix: use string.Equals(..., OrdinalIgnoreCase) and handle nulls.
+
+Problem C — Your scale-mode branch is currently unreachable
+This one is subtle but huge:
+
+You wrote:
+
+if (vdata.Equals(FLAG_X) || vdata.Equals(FLAG_Y))
+{
+   ...
+   else if (vdata == FLAG_RATIO || vdata == FLAG_RELATIVE)
+   {
+      ...
+   }
+}
+That else if (FLAG_RATIO/FLAG_RELATIVE) is inside the “size flags” block — so it will never run unless vdata is simultaneously X/Y and ratio/relative (impossible).
+
+✅ Fix: restructure as:
+
+if (FLAG_X || FLAG_Y) { ... }
+
+else if (FLAG_RATIO || FLAG_RELATIVE) { ... }
+
+Same as the Java flow.
+
+2) The exact changes you should make
+Change 1 — Fix unit acquisition + conversion (the big one)
+Replace your “units section” in calculateSizeScale() with this pattern.
+
+Goal: feed the right codes into the right helpers.
+
+// get the current Map Extents
+Envelope visibleEnv = currentExtent;
+
+// --- Get unit codes from the spatial reference ---
+int unitFactoryCode = -1; // 9001, 9002, 9003, 9102...
+int unitTypeCode    = -1; // UnitTypeCode (Meters/Feet/FeetUS/Degrees...)
+
+var srUnit = focusMap?.SpatialReference?.Unit;
+if (srUnit != null)
+{
+    unitFactoryCode = srUnit.FactoryCode;
+
+    // Pro uses different unit classes. We want UnitTypeCode semantics for conversion.
+    if (srUnit is AngularUnit)
+        unitTypeCode = (int)UnitTypeCode.Degrees;
+    else if (srUnit is LinearUnit lu)
+        unitTypeCode = (int)lu.UnitType;   // e.g. Feet, FeetUS, Meters
+    else
+        unitTypeCode = (int)UnitTypeCode.Unknown;
+}
+
+// Page unit selection expects the FACTORY code
+int expected_pageUnit = MiscUtil.GetPageUnitByRegion(unitFactoryCode);
+
+// Conversion expects UnitTypeCode semantics
+int expected_srUnit = MiscUtil.SrUnitByRegion(unitTypeCode);
+
+// holds the map width/height of the map frame in map unit
+double mapWidth  = visibleEnv.Width;
+double mapHeight = visibleEnv.Height;
+
+// Preserve aspect ratio (do this BEFORE conversions like Java)
+SetMapXYratio(mapWidth / mapHeight);
+double ratio = mapXYratio;
+
+// Convert extent dimensions into region-expected SR units (feet vs meters)
+mapWidth  = MiscUtil.RoundToDecimalD(MiscUtil.DistanceConversion(mapWidth,  unitTypeCode, expected_srUnit));
+mapHeight = MiscUtil.RoundToDecimalD(MiscUtil.DistanceConversion(mapHeight, unitTypeCode, expected_srUnit));
+
+// Convert into “page-friendly” subunits (legacy behavior)
+if (expected_pageUnit == (int)esriUnits.esriCentimeters)
+{
+    mapWidth  *= 100;
+    mapHeight *= 100;
+}
+else if (expected_pageUnit == (int)esriUnits.esriInches)
+{
+    mapWidth  *= 12;
+    mapHeight *= 12;
+}
+Why this fixes you: it aligns your helper expectations:
+
+GetPageUnitByRegion() → factory code
+
+getESRIUnit2Str() → factory code
+
+DistanceConversion() and SrUnitByRegion() → UnitTypeCode
+
+Change 2 — Fix SetRatioRelativeScale() and SetRelativeRatioScale()
+Make both methods consistent, null-safe, and case-safe:
+
+public double SetRatioRelativeScale(double vdata)
+{
+    ratioScale = MiscUtil.RoundToDecimalD(vdata);
+
+    var indicator = getScaleIndicator(); // "feet" or "meters"
+    if (string.Equals(indicator, MapLayoutConstants.RELATIVE_FEET, StringComparison.OrdinalIgnoreCase))
+        relativeScale = MiscUtil.RoundToDecimalD(ratioScale / 12.0);
+    else
+        relativeScale = MiscUtil.RoundToDecimalD(ratioScale / 100.0);
+
+    return relativeScale;
+}
+
+public double SetRelativeRatioScale(double vdata)
+{
+    relativeScale = MiscUtil.RoundToDecimalD(vdata);
+
+    var indicator = getScaleIndicator();
+    if (string.Equals(indicator, MapLayoutConstants.RELATIVE_FEET, StringComparison.OrdinalIgnoreCase))
+        ratioScale = MiscUtil.RoundToDecimalD(relativeScale * 12.0);
+    else
+        ratioScale = MiscUtil.RoundToDecimalD(relativeScale * 100.0);
+
+    return ratioScale;
+}
+Change 3 — Use the display scale (Camera.Scale), not ReferenceScale
+When you’re calculating scale after page-size edits, you currently use:
+
+double localratioScale = focusMap.ReferenceScale;
+SetRatioRelativeScale(localratioScale);
+In ArcMap/Java you were effectively using the current view scale.
+
+You already wrote a working GetRatioScale() that reads camera.Scale. Use that.
+
+✅ Replace that line with:
+
+double localratioScale = GetRatioScale(); // camera.Scale
+SetRatioRelativeScale(localratioScale);
+Do this in both X-flag and Y-flag branches.
+
+Change 4 — Fix the branch structure so scale-mode actually runs
+Restructure the top-level vdata logic to match Java:
+
+if (vdata.Equals(FLAG_X, OrdinalIgnoreCase) || vdata.Equals(FLAG_Y, OrdinalIgnoreCase))
+{
+    // size-mode (existing code)
+}
+else if (vdata.Equals(FLAG_RATIO, OrdinalIgnoreCase) || vdata.Equals(FLAG_RELATIVE, OrdinalIgnoreCase))
+{
+    // scale-mode
+}
+else
+{
+    // unknown flag
+}
+Right now, your scale-mode block is nested and effectively dead.
+
+Change 5 — Fix scale-mode math to use the user-entered scale
+Inside scale-mode you currently do:
+
+double scale = 0.0;
+if (FLAG_RATIO) scale = GetRatioScale();  // WRONG: that’s current view scale
+else if (FLAG_RELATIVE) scale = GetRelativeScale();
+
+setMapSizeX(mapWidth / GetRatioScale());  // WRONG: ignores scale var
+This is not equivalent to Java. In Java scale-mode uses the scale the user selected/entered, converted to ratioScale internally.
+
+Here’s the correct port behavior:
+
+double ratioScaleToUse;
+
+if (vdata.Equals(MapLayoutConstants.FLAG_RATIO, StringComparison.OrdinalIgnoreCase))
+{
+    // user entered ratio scale (1:N)
+    ratioScaleToUse = GetRatioScale();  // <— ONLY if your UI is populating ratioScale somewhere else.
+    // Better: ratioScaleToUse = ratioScale;  (if UI sets it before calling calculate)
+}
+else
+{
+    // user entered relative (1 inch = X feet/meters)
+    ratioScaleToUse = SetRelativeRatioScale(GetRelativeScale()); // converts and updates ratioScale
+}
+
+// Now compute map frame size from extent and chosen scale
+setMapSizeX(mapWidth / ratioScaleToUse);
+setMapSizeY(mapHeight / ratioScaleToUse);
+Important note: your current design is confusing because GetRatioScale() returns the camera scale, not “the ratio the user typed into the UI”.
+
+If the UI textbox sets ratioScale via SetRatioRelativeScale(valueFromTextbox), then in scale-mode you should use ratioScale, not GetRatioScale().
+
+So the best pattern is:
+
+UI sets internal fields first (SetRatioRelativeScale(userRatio) or SetRelativeRatioScale(userRelative))
+
+calculateSizeScale(FLAG_RATIO/FLAG_RELATIVE) uses the stored ratioScale
+
+That makes it identical to the Java behavior.
+
+3) One more recommendation (ArcGIS Pro threading safety)
+You’re directly reading:
+
+MapView.Active
+
+mxDoc.Map
+
+mxDoc.Extent
+
+focusMap.SpatialReference...
+
+This often works, but if you’re seeing intermittent weirdness, wrap reads in:
+
+await QueuedTask.Run(() => { ... });
+At minimum, do unit + extent reads on the MCT and store them into locals.
+
+4) Minimal “diff list” you can implement quickly
+Replace unit section with FactoryCode + UnitTypeCode pipeline (above)
+
+Fix string compares in SetRatioRelativeScale + SetRelativeRatioScale
+
+Use GetRatioScale() (camera) instead of ReferenceScale when you want “current view scale”
+
+Move the scale-mode else if (FLAG_RATIO/FLAG_RELATIVE) out of the size-mode block
+
+In scale-mode, divide by the user-selected ratio scale, not camera scale
+
+If you want, paste the small piece of code where the UI calls calculateSizeScale(...) (and where it sets ratio/relative values). That will tell me whether scale-mode should use ratioScale (stored) or a value passed into calculateSizeScale, and I’ll give you the cleanest one-to-one pattern with the Java add-in.
+
+You said:
+awesome, lets talk about the QueuedTask.Run, where would we place this?  
+ChatGPT said:
+
+Thought for a second
+You’ve got two good options for QueuedTask.Run here, and the “right” one depends on what you want to be thread-safe vs what you want to stay responsive.
+
+In ArcGIS Pro SDK terms: anything that touches core ArcGIS objects (Map, Layer, SpatialReference, Layout, CIM, etc.) should be assumed to require the MCT unless you’re 100% sure it’s UI-thread safe. MapView.Active is UI-ish, but Map, SpatialReference, and a lot of geometry/unit work is safer on MCT.
+
+The best place in your method
+Put QueuedTask.Run around the read / derive / compute primitives portion at the top of calculateSizeScale(...) — i.e., the part where you read:
+
+MapView.Active
+
+mxDoc.Extent
+
+mxDoc.Map
+
+focusMap.SpatialReference.Unit... (FactoryCode + UnitTypeCode)
+
+(optionally) mxDoc.Camera.Scale
+
+Then store all of those into local primitives (doubles/ints/strings) and do the rest of the algebra either:
+
+inside the same QueuedTask.Run (simplest + safest), or
+
+outside after you’ve captured primitive inputs (fine if you’re only doing math and setting your own fields).
+
+Because your method ultimately sets class fields (pageSizeX, mapSizeX, etc.), it’s usually simplest to do all the computation inside the MCT block so you don’t end up with half-updated state if someone calls it twice quickly.
+
+Option A (recommended): Wrap the “ArcGIS reads + conversions + math” in one QueuedTask.Run
+This is the cleanest and most deterministic.
+
+public async Task CalculateSizeScale(string vdata, int layoutFormat)
+{
+    await QueuedTask.Run(() =>
+    {
+        // 1) READ ArcGIS state safely on MCT
+        var mv = MapView.Active;
+        if (mv == null) throw new InvalidOperationException("No active MapView.");
+
+        var map = mv.Map;
+        var extent = mv.Extent;
+        var cameraScale = mv.Camera?.Scale ?? -1;
+
+        // 2) Derive units safely on MCT
+        var srUnit = map?.SpatialReference?.Unit;
+        int unitFactoryCode = srUnit?.FactoryCode ?? -1;
+
+        int unitTypeCode =
+            srUnit is AngularUnit ? (int)UnitTypeCode.Degrees :
+            srUnit is LinearUnit lu ? (int)lu.UnitType :
+            (int)UnitTypeCode.Unknown;
+
+        int expectedPageUnit = MiscUtil.GetPageUnitByRegion(unitFactoryCode);
+        int expectedSrUnit   = MiscUtil.SrUnitByRegion(unitTypeCode);
+
+        // 3) Convert extent dims -> expected SR units -> page-friendly units
+        double mapWidth = extent.Width;
+        double mapHeight = extent.Height;
+
+        SetMapXYratio(mapWidth / mapHeight);
+        double ratio = mapXYratio;
+
+        mapWidth = MiscUtil.RoundToDecimalD(MiscUtil.DistanceConversion(mapWidth, unitTypeCode, expectedSrUnit));
+        mapHeight = MiscUtil.RoundToDecimalD(MiscUtil.DistanceConversion(mapHeight, unitTypeCode, expectedSrUnit));
+
+        if (expectedPageUnit == (int)esriUnits.esriCentimeters) { mapWidth *= 100; mapHeight *= 100; }
+        else if (expectedPageUnit == (int)esriUnits.esriInches) { mapWidth *= 12; mapHeight *= 12; }
+
+        // 4) Now run the same layoutFormat + vdata algebra you already have
+        ResetOffsets();
+
+        // ... your existing FLAG_X / FLAG_Y math ...
+        // ... your existing FLAG_RATIO / FLAG_RELATIVE math ...
+
+        // When you want “current view scale”, use cameraScale not ReferenceScale:
+        // SetRatioRelativeScale(cameraScale);
+    });
+}
+Why this works well for you:
+
+It eliminates “random” threading issues.
+
+It ensures all computations use a consistent snapshot of view/map state.
+
+It matches the ArcGIS Pro SDK pattern used in production add-ins.
+
+Option B: Only wrap ArcGIS object access, do math outside
+This keeps the heavy math off the MCT (though your math isn’t heavy). It’s a bit more code but totally valid.
+
+public async Task CalculateSizeScale(string vdata, int layoutFormat)
+{
+    // Capture a snapshot of ArcGIS state on the MCT
+    var snap = await QueuedTask.Run(() =>
+    {
+        var mv = MapView.Active;
+        if (mv == null) return null;
+
+        var map = mv.Map;
+        var extent = mv.Extent;
+
+        var srUnit = map?.SpatialReference?.Unit;
+        int factory = srUnit?.FactoryCode ?? -1;
+        int typeCode =
+            srUnit is AngularUnit ? (int)UnitTypeCode.Degrees :
+            srUnit is LinearUnit lu ? (int)lu.UnitType :
+            (int)UnitTypeCode.Unknown;
+
+        return new
+        {
+            ExtentWidth = extent.Width,
+            ExtentHeight = extent.Height,
+            CameraScale = mv.Camera.Scale,
+            UnitFactoryCode = factory,
+            UnitTypeCode = typeCode
+        };
+    });
+
+    if (snap == null)
+        throw new InvalidOperationException("No active MapView.");
+
+    // Now everything below is pure math + setting your fields
+    int expectedPageUnit = MiscUtil.GetPageUnitByRegion(snap.UnitFactoryCode);
+    int expectedSrUnit = MiscUtil.SrUnitByRegion(snap.UnitTypeCode);
+
+    double mapWidth = snap.ExtentWidth;
+    double mapHeight = snap.ExtentHeight;
+
+    SetMapXYratio(mapWidth / mapHeight);
+    double ratio = mapXYratio;
+
+    mapWidth = MiscUtil.RoundToDecimalD(MiscUtil.DistanceConversion(mapWidth, snap.UnitTypeCode, expectedSrUnit));
+    mapHeight = MiscUtil.RoundToDecimalD(MiscUtil.DistanceConversion(mapHeight, snap.UnitTypeCode, expectedSrUnit));
+
+    if (expectedPageUnit == (int)esriUnits.esriCentimeters) { mapWidth *= 100; mapHeight *= 100; }
+    else if (expectedPageUnit == (int)esriUnits.esriInches) { mapWidth *= 12; mapHeight *= 12; }
+
+    ResetOffsets();
+
+    // ... existing algebra ...
+    // Use snap.CameraScale when you need the “current view scale”
+    // SetRatioRelativeScale(snap.CameraScale);
+}
+When to choose this: if you suspect your method gets called a lot and you want minimal time on MCT. In practice, your layout algebra is small, so Option A is usually simpler.
+
+Where specifically in your current file
+Based on the code you pasted, I’d wrap starting here:
+
+MapView mxDoc = MapView.Active;
+Map mapActiveView = mxDoc.Map;
+Envelope currentExtent = mxDoc.Extent;
+Map focusMap = mapActiveView;
+
+// ... unit reads + expected_pageUnit/sr_unit ...
+// ... scale reads (camera.Scale) ...
+…and include through the “unit conversion” block and the “localratioScale” selection points (because those touch map/layout).
+
+Everything else is just arithmetic, but it’s fine to keep it inside too.
+
+One more thing: your method is async but mostly not “awaiting” anything
+Right now you only await when you try to fetch a layout. If you adopt Option A, your method becomes a single awaited QueuedTask.Run, which is nice and predictable.
+
+If you want, paste the method signature + the UI call site (where this gets triggered). I’ll suggest whether you should debounce calls (e.g., textbox typing) to avoid multiple QueuedTask.Run calls firing per keystroke, which can also feel like “weird math” because state changes mid-calculation.
+
+You said:
+awesome, what if I told you that the calcualtesizescalemethod we're making alterations to doesnt have any references.  
+ChatGPT said:
+
+Thought for a couple of seconds
+If calculateSizeScale(...) truly has no call sites right now, that actually helps — it means we can refactor it aggressively (units + threading + branch logic) without worrying about breaking existing behavior, and then wire it back in cleanly once it’s correct.
+
+Here’s how I’d interpret that situation and what I’d do next.
+
+What “no references” usually means (in your context)
+1) It’s dead code (never called)
+Very common during a port: you copied the Java logic in, but you haven’t connected it to:
+
+your dockpane view model commands
+
+textbox changed handlers (page size / scale inputs)
+
+the layout builder pipeline (CreateBaseLayoutAsync, etc.)
+
+In that case, your current “weird scale math” is probably coming from some other code path that’s calculating scale/page size independently.
+
+2) It’s called via reflection / binding / command strings (rare but possible)
+In Pro add-ins, methods can be “invoked” indirectly by:
+
+commands in DAML (but that typically maps to ICommand/OnClick, not arbitrary methods)
+
+event wiring / delegates
+
+view model bindings (calling a command that eventually calls it)
+
+Still, “Find all references” won’t show reflection, so it’s worth confirming via a quick search for the method name string too.
+
+3) You have two similar methods
+Sometimes you’ve got CalculateSizeScaleAsync vs calculateSizeScale or a slightly different signature being used. So the method with no references might not be the one actually in play.
+
+If it’s not referenced, would QueuedTask.Run still matter?
+Not directly (because it’s not running), but…
+
+Yes, it still matters if you plan to hook it up soon. You’ll want the method to be correct before wiring it into UI events, because once you do, it’s likely to be called:
+
+on every keystroke in a textbox
+
+on selection change events
+
+as part of layout generation
+
+…and thread issues become much more likely.
+
+So I’d still implement QueuedTask.Run inside it as part of hardening the method.
+
+The more important question: where is the bad scale math actually happening?
+If calculateSizeScale(...) is not being called, then the “cascading downstream” issues you’re seeing must come from somewhere else, like:
+
+your layout builder computing map frame scale based on extent and page size
+
+a mapframe camera set/scale adjustment
+
+your size/scale inputs being applied somewhere else
+
+conversion helpers being used elsewhere (DistanceConversion or GetPageUnitByRegion)
+
+Best fast test: add a one-liner debug mark inside calculateSizeScale:
+
+System.Diagnostics.Debug.WriteLine("SizeScaleCalculator.calculateSizeScale CALLED");
+Run your workflow. If you never see it, we stop investing time here and go find the real caller.
+
+What I’d do next (no clarifying questions, just best path)
+Step 1 — Confirm whether it executes
+Add the Debug.WriteLine above (or a breakpoint). Run your usual repro steps.
+
+If it does not hit: we pivot to the real math path.
+
+If it does hit: proceed with the refactor + unit fixes + QueuedTask.
+
+Step 2 — Find the actual scale/page-size pipeline
+Search for:
+
+Camera.Scale =
+
+ReferenceScale
+
+SetCamera(...)
+
+SetViewpoint(...) / ZoomTo(...)
+
+MapFrame.SetCamera(...) / MapFrame.GetCamera()
+
+anything calling DistanceConversion(...), GetPageUnitByRegion(...), SrUnitByRegion(...)
+
+any code computing mapWidth / scale or extent.Width / something
+
+If you paste the class/method that’s currently setting the map frame extent/scale in your layout (likely in your layout builder), I can pinpoint the exact mismatch.
+
+If you still want to keep working on calculateSizeScale anyway
+Even if it’s unreferenced, I’d still make these “correctness” changes now so it’s ready when you hook it up:
+
+Fix the unit acquisition (FactoryCode + UnitTypeCode)
+
+Fix top-level branching (size flags vs scale flags) so scale-mode can run
+
+Use Camera.Scale (not ReferenceScale) when you want “current view scale”
+
+Wrap ArcGIS reads in QueuedTask.Run
+
+That makes it a reliable drop-in later.
+
+Quick note on files
+I can’t re-open earlier uploaded files automatically because some expired in the environment. If you want me to trace the actual scale math path, paste or re-upload the layout builder method that:
+
+creates the map frame, and/or
+
+sets the map frame camera/extent/scale.
+
+The moment I see where you’re setting the camera/scale, I can tell you why it diverges from the Java behavior.
+
+If you paste the method where you create the mapframe (or where you set its camera/scale) in your ArcGIS Pro layout code, I’ll zero in on the exact place the scale goes sideways.
+
+You said:
+BmMapLayoutVM.cs
+File
+lets try this file, can you walk through this and examine it in the same way you examined sizescalecalc
+ChatGPT said:
+
+Thought for 57s
+Yep — this file is the real pipeline that’s driving your size/scale math right now. It basically replaces SizeScaleCalculator.cs with an in-VM “unified recalculation pipeline” (debounced + cancellable), so it makes total sense that calculateSizeScale(...) has no references.
+
+Below is a step-by-step walkthrough of what BmMapLayoutVM does, where the scale math happens, and (most importantly) the exact bug that will absolutely produce the weird math/cascading effects you’ve been seeing — plus the changes to make it correct and Java-equivalent.
+
+1) What this ViewModel is responsible for
+BmMapLayoutVM is your Dockpane/ViewModel layer for the layout tool. It owns:
+
+UI state: checkboxes, logo selection, graticule selection, map titles, pipeline toggles
+
+User input textboxes:
+
+PageSizeXText, PageSizeYText
+
+MapScaleText (ratio scale “1:N”)
+
+RelScaleText (relative “1 inch = X units”)
+
+A debounced recalculation engine that recomputes page size + scale to keep everything consistent after edits.
+
+The big architectural takeaway:
+
+✅ The “real” scale computation is happening in ComputeSizeScaleAsync(...), not in the old SizeScaleCalculator.cs.
+
+2) The recalculation pipeline (how UI changes turn into computed values)
+a) Each textbox setter sets a flag and schedules recalculation
+Example:
+
+sizeScaleFlag = MapLayoutConstants.FLAG_X;
+...
+_sizeEdited = true;
+MaintainAspectInstant(isX: true);
+AfterPageXChanged(); // -> ScheduleRecalc(PageX)
+Same for PageSizeYText, MapScaleText, RelScaleText.
+
+b) Scheduling is debounced (120ms) and cancellable
+_recalcCts cancels in-flight recalcs when the user keeps typing.
+
+RunRecalcPipelineAsync(...) delays, then calls ComputeSizeScaleAsync(...), then applies results.
+
+This is solid, professional-grade UX logic.
+
+3) Where the size/scale math actually happens
+It’s all in:
+
+private async Task<SizeScaleResult> ComputeSizeScaleAsync(RecalcOrigin origin, int layoutFormat, CancellationToken ct)
+Inside it, you do:
+
+snapshot inputs (inputX, inputY, inputMapScale, inputRelScale)
+
+then QueuedTask.Run(() => { ... }) where you:
+
+read MapView.Active, mv.Map, mv.Extent
+
+detect units (feet vs not)
+
+compute map width/height and conversions
+
+call one of:
+
+ComputeFromY() when user edited page Y
+
+ComputeFromX() when user edited page X
+
+ComputeFromScale() when user edited ratio/relative scale
+
+finalize and return
+
+So: this is your new “SizeScaleCalculator”, embedded in the VM.
+
+4) The critical bug causing “weird math” + cascading errors
+🔥 Bug: you’re using FactoryCode as if it were UnitTypeCode
+You do:
+
+int mapUnitFc = mv.Map.SpatialReference?.Unit?.FactoryCode ?? 0;
+int srMapUnit = SpatialUtil.ESRI_UNIT_MAP_TO_SR_UNIT[mapUnitFc];
+int expectedSrUnit = MiscUtil.SrUnitByRegion(srMapUnit);
+int expectedPageUnit = MiscUtil.GetPageUnitByRegion(mapUnitFc);
+
+double groundWidthExp = DistanceConversion(groundWidth, srMapUnit, expectedSrUnit);
+But based on your helpers (HelperMethods.cs):
+
+GetPageUnitByRegion(...) expects factory codes like 9001/9002/9003/9102 ✅
+
+SrUnitByRegion(...) expects UnitTypeCode (Feet/Meters/Degrees/FeetUS) ✅
+
+DistanceConversion(...) expects UnitTypeCode ✅
+
+SpatialUtil.ESRI_UNIT_MAP_TO_SR_UNIT is keyed by UnitTypeCode ❌ (not factory code)
+
+So this line is wrong in the same fundamental way we discussed earlier:
+
+SpatialUtil.ESRI_UNIT_MAP_TO_SR_UNIT[mapUnitFc]
+If your map unit factory code is 9001 or 9003, that dictionary lookup is either:
+
+throwing / being avoided somehow, OR
+
+returning nonsense if you have a different mapping in this project
+
+Either way, this will blow up your conversion math (groundWidthExp/groundHeightExp), which then blows up:
+
+groundWidthPage
+
+mapFrameX = groundWidthPage / mapScale
+
+then page size and legend allocation
+
+That’s your cascading effect.
+
+5) There’s also a ratio issue (less severe, but worth fixing)
+You set:
+
+double ratio = groundWidth / groundHeight;
+But you really want the ratio of the same-space width/height you’re using to size the map frame.
+
+In the Java code, the ratio was taken before conversion, which is usually fine because linear unit conversion cancels out in a ratio. However:
+
+If you’re in degrees and you’re using an approximate meters/degree factor, it’s still uniform in your helper (constant METERS_PER_DEGREE), so ratio stays stable.
+
+So this one is not your main bug.
+
+The unit-code mismatch is the main bug.
+
+6) The fix: use both FactoryCode and UnitTypeCode correctly
+Inside ComputeSizeScaleAsync, replace your unit conversion block with this:
+
+✅ Corrected unit pipeline (drop-in replacement)
+// Unit conversions: ground SR units -> expected SR units (per region) -> page units (cm/in)
+
+// Factory code (9001/9002/9003/9102) drives page unit choice + region logic
+int unitFactoryCode = mv.Map.SpatialReference?.Unit?.FactoryCode ?? 0;
+
+// UnitTypeCode drives DistanceConversion + SrUnitByRegion
+int unitTypeCode =
+    mv.Map.SpatialReference?.Unit is AngularUnit ? (int)UnitTypeCode.Degrees :
+    mv.Map.SpatialReference?.Unit is LinearUnit lu ? (int)lu.UnitType :
+    (int)UnitTypeCode.Unknown;
+
+// Expected SR unit based on region (your helper expects UnitTypeCode)
+int expectedSrUnit = MiscUtil.SrUnitByRegion(unitTypeCode);
+
+// Page unit based on region (your helper expects FactoryCode)
+int expectedPageUnit = MiscUtil.GetPageUnitByRegion(unitFactoryCode);
+
+// Convert ground dimension to expected SR units (UnitTypeCode in/out)
+double groundWidthExp = MiscUtil.RoundToDecimalD(MiscUtil.DistanceConversion(groundWidth, unitTypeCode, expectedSrUnit));
+double groundHeightExp = MiscUtil.RoundToDecimalD(MiscUtil.DistanceConversion(groundHeight, unitTypeCode, expectedSrUnit));
+
+// Convert expected SR units into “page-friendly” units (legacy behavior)
+double toPageFactor = 1.0;
+if (expectedPageUnit == (int)ArcGIS.Core.CIM.esriUnits.esriCentimeters) toPageFactor = 100.0;
+else if (expectedPageUnit == (int)ArcGIS.Core.CIM.esriUnits.esriInches) toPageFactor = 12.0;
+
+double groundWidthPage = groundWidthExp * toPageFactor;
+double groundHeightPage = groundHeightExp * toPageFactor;
+
+// Aspect ratio (use raw extent ratio, fine in practice)
+double ratio = groundWidth / groundHeight;
+What this fixes
+DistanceConversion(...) now receives UnitTypeCode values like Feet/Meters/Degrees ✅
+
+SrUnitByRegion(...) now receives UnitTypeCode ✅
+
+GetPageUnitByRegion(...) still gets FactoryCode ✅
+
+No bogus dictionary lookup via ESRI_UNIT_MAP_TO_SR_UNIT[factoryCode]
+
+This aligns exactly with the helper method intent and is consistent with your Java logic.
+
+7) Another correctness fix: FormatChange is overwriting user-entered scale
+In FormatChange, you do:
+
+else
+    ComputeFromScale(isRatioPath: true);
+
+mapScale = ClampPositive(mv.Camera.Scale);
+relScale = ...
+That last overwrite forces camera scale even when the user had just changed scale. That can make the UI “fight” the user and look like math is wrong.
+
+Recommendation:
+
+Only overwrite from mv.Camera.Scale in the PageX/PageY branches (where you’re explicitly using current view scale).
+
+In Ratio/Relative branches, keep the scale derived from the user input.
+
+So for FormatChange, decide based on _lastUserEditOrigin and don’t blindly overwrite after.
+
+8) About QueuedTask.Run: you already placed it correctly here
+In this file, your QueuedTask.Run is in exactly the right place:
+
+It wraps reading MapView.Active, map SR, extent, and camera scale.
+
+It keeps all computations based on a consistent snapshot.
+
+You don’t pass ct into QueuedTask.Run (good), but you do ct.ThrowIfCancellationRequested() early (also good).
+
+So you don’t need to add more QueuedTask.Run here — you need to fix the unit code mismatch inside it.
+
+9) Summary: why your math is currently off
+Your pipeline is doing the right shape of math (very similar to Java), but it’s feeding the conversion system the wrong identifiers:
+
+FactoryCode is not UnitTypeCode
+
+You’re mixing those in the conversion pipeline
+
+That corrupts groundWidthPage, which corrupts mapFrame size, which corrupts page size and legend math
+
+Fixing that unit pipeline will remove the “nonsense scale behavior” you’re seeing.
+
+If you want, paste your SpatialUtil.ESRI_UNIT_MAP_TO_SR_UNIT from the current project (in case it differs from the helper file you uploaded). But based on what you’ve shown, I’d implement the “Corrected unit pipeline” above and you should immediately see numbers stabilize and behave like the Java add-in.
+
+You said:
+could you show me then new computesizescaleasync method pelase but where possible can you keep the current variable names. Here's the code 
+        private async Task<SizeScaleResult> ComputeSizeScaleAsync(RecalcOrigin origin, int layoutFormat, CancellationToken ct)
+        {
+            // Snapshot
+            double inputX = _pageSizeX;
+            double inputY = _pageSizeY;
+            double inputMapScale = _mapScale;
+            double inputRelScale = _relScale;
+
+            double margin = marginSz;
+            double gap = gapSz;
+            double legendPercent = legendAreaPercent;
+            double logoHeightBase = MapLayoutConstants.logoHeight;
+
+            // IMPORTANT FIX: remove ct from QueuedTask.Run call; still check ct inside
+            return await QueuedTask.Run(() =>
+            {
+                ct.ThrowIfCancellationRequested();
+
+                var mv = MapView.Active;
+                if (mv?.Map == null || mv.Extent == null)
+                {
+                    return new SizeScaleResult(inputX, inputY, inputMapScale, inputRelScale);
+                }
+
+                var map = mv.Map;
+                var srUnit = map.SpatialReference?.Unit as LinearUnit;
+                bool feet = srUnit != null && (srUnit.Name == "Foot_US" || Math.Abs(srUnit.MetersPerUnit - 0.305) < 1e-6);
+
+                double mapWidth = mv.Extent.Width;
+                double mapHeight = mv.Extent.Height;
+                if (mapWidth <= 0 || mapHeight <= 0)
+                    return new SizeScaleResult(inputX, inputY, inputMapScale, inputRelScale);
+
+                
+
+                double pageX = inputX;
+                double pageY = inputY;
+                double mapScale = inputMapScale;
+                double relScale = inputRelScale;
+                double legendXLocal = 0.0;
+                double logoMarginLocal = logoHeightBase;
+
+                double workingMargin = MapLayoutConstants.marginSz;
+                double workingGap = MapLayoutConstants.gapSz;
+                double workingLegendPercent = MapLayoutConstants.legendAreaPercent;
+                // Ground width/height in current SR units
+                double groundWidth = mv.Extent.Width;
+                double groundHeight = mv.Extent.Height;
+                if (groundWidth <= 0 || groundHeight <= 0)
+                    return new SizeScaleResult(inputX, inputY, inputMapScale, inputRelScale);
+
+                // Unit conversions: ground SR units -> expected SR units (per region) -> page units (cm/in)
+                int mapUnitFc = mv.Map.SpatialReference?.Unit?.FactoryCode ?? 0;
+                int srMapUnit = SpatialUtil.ESRI_UNIT_MAP_TO_SR_UNIT[mapUnitFc];
+                int expectedSrUnit = MiscUtil.SrUnitByRegion(srMapUnit);
+                int expectedPageUnit = MiscUtil.GetPageUnitByRegion(mapUnitFc);
+
+                // Convert ground dimension to expected SR units
+                double groundWidthExp = MiscUtil.RoundToDecimalD(MiscUtil.DistanceConversion(groundWidth, srMapUnit, expectedSrUnit));
+                double groundHeightExp = MiscUtil.RoundToDecimalD(MiscUtil.DistanceConversion(groundHeight, srMapUnit, expectedSrUnit));
+
+                double toPageFactor = 1.0;
+                if (expectedPageUnit == (int)ArcGIS.Core.CIM.esriUnits.esriCentimeters) toPageFactor = 100.0;
+                else if (expectedPageUnit == (int)ArcGIS.Core.CIM.esriUnits.esriInches) toPageFactor = 12.0;
+
+                double groundWidthPage = groundWidthExp * toPageFactor;
+                double groundHeightPage = groundHeightExp * toPageFactor;
+
+                double ratio = groundWidth / groundHeight;
+
+                void AdjustOffsets(double px, double py)
+                {
+                    double larger = Math.Max(px, py);
+                    double pageRatioLocal = MiscUtil.RoundToDecimalD(larger / 11.0);
+                    double coeff = 0.0;
+                    if (pageRatioLocal >= 7.0) coeff = MiscUtil.RoundToDecimalD(MapLayoutConstants.pageCoeff * pageRatioLocal * 7.5);
+                    else if (pageRatioLocal >= 6.0) coeff = MiscUtil.RoundToDecimalD(MapLayoutConstants.pageCoeff * pageRatioLocal * 6.5);
+                    else if (pageRatioLocal >= 5.0) coeff = MiscUtil.RoundToDecimalD(MapLayoutConstants.pageCoeff * pageRatioLocal * 5.5);
+                    else if (pageRatioLocal >= 4.0) coeff = MiscUtil.RoundToDecimalD(MapLayoutConstants.pageCoeff * pageRatioLocal * 4.5);
+                    else if (pageRatioLocal >= 3.0) coeff = MiscUtil.RoundToDecimalD(MapLayoutConstants.pageCoeff * pageRatioLocal * 3.5);
+                    else if (pageRatioLocal >= 2.5) coeff = MiscUtil.RoundToDecimalD(MapLayoutConstants.pageCoeff * pageRatioLocal * 2.5);
+                    else if (pageRatioLocal >= 2.0) coeff = MiscUtil.RoundToDecimalD(MapLayoutConstants.pageCoeff * pageRatioLocal * 2.0);
+                    else if (pageRatioLocal >= 1.5) coeff = MiscUtil.RoundToDecimalD(MapLayoutConstants.pageCoeff * pageRatioLocal * 1.5);
+
+                    workingLegendPercent = MapLayoutConstants.legendAreaPercent;
+                    workingMargin = MapLayoutConstants.marginSz + MapLayoutConstants.marginSz * coeff;
+                    workingGap = MapLayoutConstants.gapSz + MapLayoutConstants.gapSz * coeff;
+
+                    if (pageRatioLocal < 1.0)
+                    {
+                        workingMargin = MapLayoutConstants.marginSz * 0.5;
+                        workingGap = MapLayoutConstants.gapSz * 0.5;
+                    }
+                }
+
+                void ComputeFromY()
+                {
+                    double miny = workingMargin + workingMargin;
+                    double minx = workingMargin + workingMargin;
+                    double cx = 4.0 * workingMargin;
+                    double cy = (layoutFormat == 1) ? 4.0 * workingMargin : 2.0 * workingMargin;
+
+                    if (layoutFormat == 1)
+                    {
+                        double mapSizeYLocal = pageY - miny - cy - workingMargin;
+                        double mapSizeXLocal = mapSizeYLocal * ratio;
+                        pageX = (mapSizeXLocal + minx + 2.0 * workingMargin + cx) / (1 - workingLegendPercent);
+                        legendXLocal = pageX * workingLegendPercent + cx;
+                        AdjustOffsets(pageX, pageY);
+
+                        if (pageY > 11.0)
+                            logoMarginLocal = (pageY / 11.0) * MapLayoutConstants.logoHeight + workingMargin;
+                        else
+                            logoMarginLocal = MapLayoutConstants.logoHeight + workingMargin;
+                        cy = logoMarginLocal;
+
+                        mapSizeYLocal = pageY - miny - cy - workingMargin;
+                        mapSizeXLocal = mapSizeYLocal * ratio;
+                        pageX = (mapSizeXLocal + minx + 2.0 * workingMargin + cx) / (1 - workingLegendPercent);
+                        legendXLocal = pageX * workingLegendPercent + cx;
+                    }
+                    else if (layoutFormat == 2)
+                    {
+                        double mapSizeYLocal = pageY - miny - cy;
+                        double mapSizeXLocal = mapSizeYLocal * ratio;
+                        pageX = (mapSizeXLocal + minx + 2.0 * workingMargin + cx) / (1 - workingLegendPercent);
+                        legendXLocal = pageX * workingLegendPercent + cx;
+                        AdjustOffsets(pageX, pageY);
+
+                        mapSizeYLocal = pageY - miny - cy;
+                        mapSizeXLocal = mapSizeYLocal * ratio;
+                        pageX = (mapSizeXLocal + minx + 2.0 * workingMargin + cx) / (1 - workingLegendPercent);
+                        legendXLocal = pageX * workingLegendPercent + cx;
+                    }
+                    else if (layoutFormat == 3)
+                    {
+                        legendXLocal = 0.0;
+                        double mapSizeYLocal = pageY - miny - cy;
+                        double mapSizeXLocal = mapSizeYLocal * ratio;
+                        pageX = mapSizeXLocal + minx + legendXLocal + 2.0 * workingMargin;
+                        AdjustOffsets(pageX, pageY);
+
+                        mapSizeYLocal = pageY - miny - cy;
+                        mapSizeXLocal = mapSizeYLocal * ratio;
+                        pageX = mapSizeXLocal + minx + legendXLocal + 2.0 * workingMargin;
+                    }
+                }
+
+                void ComputeFromX()
+                {
+                    double miny = workingMargin + workingMargin;
+                    double minx = workingMargin + workingMargin;
+                    double cx = 4.0 * workingMargin;
+                    double cy = (layoutFormat == 1) ? 4.0 * workingMargin : 2.0 * workingMargin;
+
+                    if (layoutFormat == 1)
+                    {
+                        legendXLocal = pageX * workingLegendPercent + cx;
+                        double mapSizeXLocal = pageX - minx - legendXLocal - 2.0 * workingMargin;
+                        double mapSizeYLocal = mapSizeXLocal / ratio;
+                        pageY = mapSizeYLocal + miny + cy + workingMargin;
+                        AdjustOffsets(pageX, pageY);
+
+                        if (pageY > 11.0)
+                            logoMarginLocal = (pageY / 11.0) * MapLayoutConstants.logoHeight + workingMargin;
+                        else
+                            logoMarginLocal = MapLayoutConstants.logoHeight + workingMargin;
+                        cy = logoMarginLocal;
+
+                        legendXLocal = pageX * workingLegendPercent + cx;
+                        mapSizeXLocal = pageX - minx - legendXLocal - 2.0 * workingMargin;
+                        mapSizeYLocal = mapSizeXLocal / ratio;
+                        pageY = mapSizeYLocal + miny + cy + workingMargin;
+                    }
+                    else if (layoutFormat == 2)
+                    {
+                        legendXLocal = pageX * workingLegendPercent + cx;
+                        double mapSizeXLocal = pageX - minx - legendXLocal - 2.0 * workingMargin;
+                        double mapSizeYLocal = mapSizeXLocal / ratio;
+                        pageY = mapSizeYLocal + miny + cy;
+                        AdjustOffsets(pageX, pageY);
+
+                        legendXLocal = pageX * workingLegendPercent + cx;
+                        mapSizeXLocal = pageX - minx - legendXLocal - 2.0 * workingMargin;
+                        mapSizeYLocal = mapSizeXLocal / ratio;
+                        pageY = mapSizeYLocal + miny + cy;
+                    }
+                    else if (layoutFormat == 3)
+                    {
+                        legendXLocal = 0.0;
+                        double mapSizeXLocal = pageX - minx - legendXLocal - 2.0 * workingMargin;
+                        double mapSizeYLocal = mapSizeXLocal / ratio;
+                        pageY = mapSizeYLocal + miny + cy;
+                        AdjustOffsets(pageX, pageY);
+
+                        mapSizeXLocal = pageX - minx - legendXLocal - 2.0 * workingMargin;
+                        mapSizeYLocal = mapSizeXLocal / ratio;
+                        pageY = mapSizeYLocal + miny + cy;
+                    }
+                }
+
+                void ComputeFromScale(bool isRatioPath)
+                {
+                    if (isRatioPath)
+                    {
+                        mapScale = ClampPositive(mapScale);
+                        relScale = ClampPositive(feet ? mapScale / 12.0 : mapScale / 100.0);
+                    }
+                    else
+                    {
+                        relScale = ClampPositive(relScale);
+                        mapScale = ClampPositive(feet ? relScale * 12.0 : relScale * 100.0);
+                    }
+
+                    //double mapFrameX = mapWidth / mapScale;
+                    //double mapFrameY = mapHeight / mapScale;
+                    double mapFrameX = groundWidthPage / mapScale;
+                    double mapFrameY = groundHeightPage / mapScale;
+
+
+                    double miny = workingMargin + workingMargin;
+                    double minx = workingMargin + workingMargin;
+                    double cx = 4.0 * workingMargin;
+                    double cy = 2.0 * workingMargin;
+
+                    if (layoutFormat == 2)
+                    {
+                        pageY = mapFrameY + miny + cy;
+                        legendXLocal = mapFrameX * workingLegendPercent + cx;
+                        pageX = minx + mapFrameX + legendXLocal + 3.0 * workingMargin;
+                        AdjustOffsets(pageX, pageY);
+
+                        pageY = mapFrameY + miny + cy;
+                        legendXLocal = mapFrameX * workingLegendPercent + cx;
+                        pageX = minx + mapFrameX + legendXLocal + 3.0 * workingMargin;
+                    }
+                    else if (layoutFormat == 1)
+                    {
+                        cy = 4.0 * workingMargin;
+                        pageY = mapFrameY + miny + cy + workingMargin;
+                        legendXLocal = mapFrameX * workingLegendPercent + cx;
+                        pageX = minx + mapFrameX + legendXLocal + 3.0 * workingMargin;
+                        AdjustOffsets(pageX, pageY);
+
+                        if (pageY > 11.0)
+                            logoMarginLocal = (pageY / 11.0) * MapLayoutConstants.logoHeight + workingMargin;
+                        else
+                            logoMarginLocal = MapLayoutConstants.logoHeight + workingMargin;
+                        cy = logoMarginLocal;
+
+                        pageY = mapFrameY + miny + cy + workingMargin;
+                        legendXLocal = mapFrameX * workingLegendPercent + cx;
+                        pageX = minx + mapFrameX + legendXLocal + 3.0 * workingMargin;
+                    }
+                    else if (layoutFormat == 3)
+                    {
+                        legendXLocal = 0.0;
+                        cx = 4 * workingMargin;
+                        cy = 4 * workingMargin;
+                        pageY = mapFrameY + cy;
+                        pageX = mapFrameX + cx;
+                        AdjustOffsets(pageX, pageY);
+
+                        pageY = mapFrameY + cy;
+                        pageX = mapFrameX + cx;
+                    }
+                }
+
+                switch (origin)
+                {
+                    case RecalcOrigin.PageY:
+                        ComputeFromY();
+                        mapScale = ClampPositive(mv.Camera.Scale);
+                        relScale = ClampPositive(feet ? mapScale / 12.0 : mapScale / 100.0);
+                        break;
+
+                    case RecalcOrigin.PageX:
+                        ComputeFromX();
+                        mapScale = ClampPositive(mv.Camera.Scale);
+                        relScale = ClampPositive(feet ? mapScale / 12.0 : mapScale / 100.0);
+                        break;
+
+                    case RecalcOrigin.RatioScale:
+                        ComputeFromScale(isRatioPath: true);
+                        break;
+
+                    case RecalcOrigin.RelativeScale:
+                        ComputeFromScale(isRatioPath: false);
+                        break;
+
+                    case RecalcOrigin.FormatChange:
+                        if (_lastUserEditOrigin == RecalcOrigin.PageX)
+                        {
+                            ComputeFromX();
+                            mapScale = ClampPositive(mv.Camera.Scale);
+                            relScale = ClampPositive(feet ? mapScale / 12.0 : mapScale / 100.0);
+                        }
+                        else if (_lastUserEditOrigin == RecalcOrigin.PageY)
+                        {
+                            ComputeFromY();
+                            mapScale = ClampPositive(mv.Camera.Scale);
+                            relScale = ClampPositive(feet ? mapScale / 12.0 : mapScale / 100.0);
+                        }
+                        else
+                            ComputeFromScale(isRatioPath: true);
+
+                        mapScale = ClampPositive(mv.Camera.Scale);
+                        relScale = ClampPositive(feet ? mapScale / 12.0 : mapScale / 100.0);
+                        break;
+
+                    default:
+                        return new SizeScaleResult(inputX, inputY, inputMapScale, inputRelScale);
+                }
+
+                pageX = ClampPositive(MiscUtil.RoundToDecimalD(pageX));
+                pageY = ClampPositive(MiscUtil.RoundToDecimalD(pageY));
+                mapScale = ClampPositive(MiscUtil.RoundToDecimalD(mapScale));
+                relScale = ClampPositive(MiscUtil.RoundToDecimalD(relScale));
+
+                return new SizeScaleResult(pageX, pageY, mapScale, relScale);
+            });
+        }
+ChatGPT said:
+
+Thought for a couple of seconds
+Absolutely — below is a revised ComputeSizeScaleAsync that keeps your current variable names and structure, but fixes the unit pipeline (FactoryCode vs UnitTypeCode) and a couple of logic issues that can still cause “mystery” behavior.
+
+What changes in this version (high level)
+✅ Removes the incorrect ESRI_UNIT_MAP_TO_SR_UNIT[mapUnitFc] lookup (FactoryCode is not UnitTypeCode)
+
+✅ Introduces unitTypeCode (UnitTypeCode) while keeping your variable names like mapUnitFc, expectedPageUnit, expectedSrUnit, etc.
+
+✅ Uses the corrected conversion chain:
+
+extent width/height in SR units → convert using UnitTypeCode → multiply by page factor (cm/in)
+
+✅ Keeps your existing offset math + ComputeFromX/Y/Scale functions intact.
+
+⚠️ Leaves your existing “FormatChange overwrites scale with camera scale” behavior as-is (I’ll note where you might want to adjust), but keeps it since you asked to keep behavior/variables.
+
+Updated ComputeSizeScaleAsync (drop-in)
+private async Task<SizeScaleResult> ComputeSizeScaleAsync(RecalcOrigin origin, int layoutFormat, CancellationToken ct)
+{
+    // Snapshot
+    double inputX = _pageSizeX;
+    double inputY = _pageSizeY;
+    double inputMapScale = _mapScale;
+    double inputRelScale = _relScale;
+
+    double margin = marginSz;
+    double gap = gapSz;
+    double legendPercent = legendAreaPercent;
+    double logoHeightBase = MapLayoutConstants.logoHeight;
+
+    // IMPORTANT: remove ct from QueuedTask.Run call; still check ct inside
+    return await QueuedTask.Run(() =>
+    {
+        ct.ThrowIfCancellationRequested();
+
+        var mv = MapView.Active;
+        if (mv?.Map == null || mv.Extent == null)
+            return new SizeScaleResult(inputX, inputY, inputMapScale, inputRelScale);
+
+        var map = mv.Map;
+
+        // --- Determine "feet" like you currently do (kept as-is) ---
+        var srUnitLinear = map.SpatialReference?.Unit as LinearUnit;
+        bool feet = srUnitLinear != null &&
+                    (srUnitLinear.Name == "Foot_US" || Math.Abs(srUnitLinear.MetersPerUnit - 0.305) < 1e-6);
+
+        double mapWidth = mv.Extent.Width;
+        double mapHeight = mv.Extent.Height;
+        if (mapWidth <= 0 || mapHeight <= 0)
+            return new SizeScaleResult(inputX, inputY, inputMapScale, inputRelScale);
+
+        double pageX = inputX;
+        double pageY = inputY;
+        double mapScale = inputMapScale;
+        double relScale = inputRelScale;
+        double legendXLocal = 0.0;
+        double logoMarginLocal = logoHeightBase;
+
+        double workingMargin = MapLayoutConstants.marginSz;
+        double workingGap = MapLayoutConstants.gapSz;
+        double workingLegendPercent = MapLayoutConstants.legendAreaPercent;
+
+        // Ground width/height in current SR units (kept names)
+        double groundWidth = mv.Extent.Width;
+        double groundHeight = mv.Extent.Height;
+        if (groundWidth <= 0 || groundHeight <= 0)
+            return new SizeScaleResult(inputX, inputY, inputMapScale, inputRelScale);
+
+        // ---------------- FIXED UNIT PIPELINE ----------------
+        // FactoryCode (e.g., 9001, 9002, 9003, 9102) drives page unit choice and getESRIUnit2Str logic
+        int mapUnitFc = map.SpatialReference?.Unit?.FactoryCode ?? 0;
+
+        // UnitTypeCode drives DistanceConversion and SrUnitByRegion
+        int unitTypeCode;
+        var srUnit = map.SpatialReference?.Unit;
+
+        if (srUnit is AngularUnit)
+            unitTypeCode = (int)UnitTypeCode.Degrees;
+        else if (srUnit is LinearUnit lu)
+            unitTypeCode = (int)lu.UnitType; // Feet, FeetUS, Meters...
+        else
+            unitTypeCode = (int)UnitTypeCode.Unknown;
+
+        // expected SR unit (per region) expects UnitTypeCode
+        int expectedSrUnit = MiscUtil.SrUnitByRegion(unitTypeCode);
+
+        // page unit expects FactoryCode
+        int expectedPageUnit = MiscUtil.GetPageUnitByRegion(mapUnitFc);
+
+        // Convert ground dimension to expected SR units (UnitTypeCode -> expectedSrUnit)
+        double groundWidthExp = MiscUtil.RoundToDecimalD(
+            MiscUtil.DistanceConversion(groundWidth, unitTypeCode, expectedSrUnit));
+
+        double groundHeightExp = MiscUtil.RoundToDecimalD(
+            MiscUtil.DistanceConversion(groundHeight, unitTypeCode, expectedSrUnit));
+
+        // Convert expected SR units into “page-friendly” units (cm/in)
+        double toPageFactor = 1.0;
+        if (expectedPageUnit == (int)ArcGIS.Core.CIM.esriUnits.esriCentimeters) toPageFactor = 100.0;
+        else if (expectedPageUnit == (int)ArcGIS.Core.CIM.esriUnits.esriInches) toPageFactor = 12.0;
+
+        double groundWidthPage = groundWidthExp * toPageFactor;
+        double groundHeightPage = groundHeightExp * toPageFactor;
+
+        // Ratio (same as before)
+        double ratio = groundWidth / groundHeight;
+        // ------------------------------------------------------
+
+        void AdjustOffsets(double px, double py)
+        {
+            double larger = Math.Max(px, py);
+            double pageRatioLocal = MiscUtil.RoundToDecimalD(larger / 11.0);
+            double coeff = 0.0;
+
+            if (pageRatioLocal >= 7.0) coeff = MiscUtil.RoundToDecimalD(MapLayoutConstants.pageCoeff * pageRatioLocal * 7.5);
+            else if (pageRatioLocal >= 6.0) coeff = MiscUtil.RoundToDecimalD(MapLayoutConstants.pageCoeff * pageRatioLocal * 6.5);
+            else if (pageRatioLocal >= 5.0) coeff = MiscUtil.RoundToDecimalD(MapLayoutConstants.pageCoeff * pageRatioLocal * 5.5);
+            else if (pageRatioLocal >= 4.0) coeff = MiscUtil.RoundToDecimalD(MapLayoutConstants.pageCoeff * pageRatioLocal * 4.5);
+            else if (pageRatioLocal >= 3.0) coeff = MiscUtil.RoundToDecimalD(MapLayoutConstants.pageCoeff * pageRatioLocal * 3.5);
+            else if (pageRatioLocal >= 2.5) coeff = MiscUtil.RoundToDecimalD(MapLayoutConstants.pageCoeff * pageRatioLocal * 2.5);
+            else if (pageRatioLocal >= 2.0) coeff = MiscUtil.RoundToDecimalD(MapLayoutConstants.pageCoeff * pageRatioLocal * 2.0);
+            else if (pageRatioLocal >= 1.5) coeff = MiscUtil.RoundToDecimalD(MapLayoutConstants.pageCoeff * pageRatioLocal * 1.5);
+
+            workingLegendPercent = MapLayoutConstants.legendAreaPercent;
+            workingMargin = MapLayoutConstants.marginSz + MapLayoutConstants.marginSz * coeff;
+            workingGap = MapLayoutConstants.gapSz + MapLayoutConstants.gapSz * coeff;
+
+            if (pageRatioLocal < 1.0)
+            {
+                workingMargin = MapLayoutConstants.marginSz * 0.5;
+                workingGap = MapLayoutConstants.gapSz * 0.5;
+            }
+        }
+
+        void ComputeFromY()
+        {
+            double miny = workingMargin + workingMargin;
+            double minx = workingMargin + workingMargin;
+            double cx = 4.0 * workingMargin;
+            double cy = (layoutFormat == 1) ? 4.0 * workingMargin : 2.0 * workingMargin;
+
+            if (layoutFormat == 1)
+            {
+                double mapSizeYLocal = pageY - miny - cy - workingMargin;
+                double mapSizeXLocal = mapSizeYLocal * ratio;
+                pageX = (mapSizeXLocal + minx + 2.0 * workingMargin + cx) / (1 - workingLegendPercent);
+                legendXLocal = pageX * workingLegendPercent + cx;
+                AdjustOffsets(pageX, pageY);
+
+                if (pageY > 11.0)
+                    logoMarginLocal = (pageY / 11.0) * MapLayoutConstants.logoHeight + workingMargin;
+                else
+                    logoMarginLocal = MapLayoutConstants.logoHeight + workingMargin;
+                cy = logoMarginLocal;
+
+                mapSizeYLocal = pageY - miny - cy - workingMargin;
+                mapSizeXLocal = mapSizeYLocal * ratio;
+                pageX = (mapSizeXLocal + minx + 2.0 * workingMargin + cx) / (1 - workingLegendPercent);
+                legendXLocal = pageX * workingLegendPercent + cx;
+            }
+            else if (layoutFormat == 2)
+            {
+                double mapSizeYLocal = pageY - miny - cy;
+                double mapSizeXLocal = mapSizeYLocal * ratio;
+                pageX = (mapSizeXLocal + minx + 2.0 * workingMargin + cx) / (1 - workingLegendPercent);
+                legendXLocal = pageX * workingLegendPercent + cx;
+                AdjustOffsets(pageX, pageY);
+
+                mapSizeYLocal = pageY - miny - cy;
+                mapSizeXLocal = mapSizeYLocal * ratio;
+                pageX = (mapSizeXLocal + minx + 2.0 * workingMargin + cx) / (1 - workingLegendPercent);
+                legendXLocal = pageX * workingLegendPercent + cx;
+            }
+            else if (layoutFormat == 3)
+            {
+                legendXLocal = 0.0;
+                double mapSizeYLocal = pageY - miny - cy;
+                double mapSizeXLocal = mapSizeYLocal * ratio;
+                pageX = mapSizeXLocal + minx + legendXLocal + 2.0 * workingMargin;
+                AdjustOffsets(pageX, pageY);
+
+                mapSizeYLocal = pageY - miny - cy;
+                mapSizeXLocal = mapSizeYLocal * ratio;
+                pageX = mapSizeXLocal + minx + legendXLocal + 2.0 * workingMargin;
+            }
+        }
+
+        void ComputeFromX()
+        {
+            double miny = workingMargin + workingMargin;
+            double minx = workingMargin + workingMargin;
+            double cx = 4.0 * workingMargin;
+            double cy = (layoutFormat == 1) ? 4.0 * workingMargin : 2.0 * workingMargin;
+
+            if (layoutFormat == 1)
+            {
+                legendXLocal = pageX * workingLegendPercent + cx;
+                double mapSizeXLocal = pageX - minx - legendXLocal - 2.0 * workingMargin;
+                double mapSizeYLocal = mapSizeXLocal / ratio;
+                pageY = mapSizeYLocal + miny + cy + workingMargin;
+                AdjustOffsets(pageX, pageY);
+
+                if (pageY > 11.0)
+                    logoMarginLocal = (pageY / 11.0) * MapLayoutConstants.logoHeight + workingMargin;
+                else
+                    logoMarginLocal = MapLayoutConstants.logoHeight + workingMargin;
+                cy = logoMarginLocal;
+
+                legendXLocal = pageX * workingLegendPercent + cx;
+                mapSizeXLocal = pageX - minx - legendXLocal - 2.0 * workingMargin;
+                mapSizeYLocal = mapSizeXLocal / ratio;
+                pageY = mapSizeYLocal + miny + cy + workingMargin;
+            }
+            else if (layoutFormat == 2)
+            {
+                legendXLocal = pageX * workingLegendPercent + cx;
+                double mapSizeXLocal = pageX - minx - legendXLocal - 2.0 * workingMargin;
+                double mapSizeYLocal = mapSizeXLocal / ratio;
+                pageY = mapSizeYLocal + miny + cy;
+                AdjustOffsets(pageX, pageY);
+
+                legendXLocal = pageX * workingLegendPercent + cx;
+                mapSizeXLocal = pageX - minx - legendXLocal - 2.0 * workingMargin;
+                mapSizeYLocal = mapSizeXLocal / ratio;
+                pageY = mapSizeYLocal + miny + cy;
+            }
+            else if (layoutFormat == 3)
+            {
+                legendXLocal = 0.0;
+                double mapSizeXLocal = pageX - minx - legendXLocal - 2.0 * workingMargin;
+                double mapSizeYLocal = mapSizeXLocal / ratio;
+                pageY = mapSizeYLocal + miny + cy;
+                AdjustOffsets(pageX, pageY);
+
+                mapSizeXLocal = pageX - minx - legendXLocal - 2.0 * workingMargin;
+                mapSizeYLocal = mapSizeXLocal / ratio;
+                pageY = mapSizeYLocal + miny + cy;
+            }
+        }
+
+        void ComputeFromScale(bool isRatioPath)
+        {
+            if (isRatioPath)
+            {
+                mapScale = ClampPositive(mapScale);
+                relScale = ClampPositive(feet ? mapScale / 12.0 : mapScale / 100.0);
+            }
+            else
+            {
+                relScale = ClampPositive(relScale);
+                mapScale = ClampPositive(feet ? relScale * 12.0 : relScale * 100.0);
+            }
+
+            // Use converted ground dims in “page units” for frame sizing (legacy behavior)
+            double mapFrameX = groundWidthPage / mapScale;
+            double mapFrameY = groundHeightPage / mapScale;
+
+            double miny = workingMargin + workingMargin;
+            double minx = workingMargin + workingMargin;
+            double cx = 4.0 * workingMargin;
+            double cy = 2.0 * workingMargin;
+
+            if (layoutFormat == 2)
+            {
+                pageY = mapFrameY + miny + cy;
+                legendXLocal = mapFrameX * workingLegendPercent + cx;
+                pageX = minx + mapFrameX + legendXLocal + 3.0 * workingMargin;
+                AdjustOffsets(pageX, pageY);
+
+                pageY = mapFrameY + miny + cy;
+                legendXLocal = mapFrameX * workingLegendPercent + cx;
+                pageX = minx + mapFrameX + legendXLocal + 3.0 * workingMargin;
+            }
+            else if (layoutFormat == 1)
+            {
+                cy = 4.0 * workingMargin;
+                pageY = mapFrameY + miny + cy + workingMargin;
+                legendXLocal = mapFrameX * workingLegendPercent + cx;
+                pageX = minx + mapFrameX + legendXLocal + 3.0 * workingMargin;
+                AdjustOffsets(pageX, pageY);
+
+                if (pageY > 11.0)
+                    logoMarginLocal = (pageY / 11.0) * MapLayoutConstants.logoHeight + workingMargin;
+                else
+                    logoMarginLocal = MapLayoutConstants.logoHeight + workingMargin;
+                cy = logoMarginLocal;
+
+                pageY = mapFrameY + miny + cy + workingMargin;
+                legendXLocal = mapFrameX * workingLegendPercent + cx;
+                pageX = minx + mapFrameX + legendXLocal + 3.0 * workingMargin;
+            }
+            else if (layoutFormat == 3)
+            {
+                legendXLocal = 0.0;
+                cx = 4 * workingMargin;
+                cy = 4 * workingMargin;
+                pageY = mapFrameY + cy;
+                pageX = mapFrameX + cx;
+                AdjustOffsets(pageX, pageY);
+
+                pageY = mapFrameY + cy;
+                pageX = mapFrameX + cx;
+            }
+        }
+
+        switch (origin)
+        {
+            case RecalcOrigin.PageY:
+                ComputeFromY();
+                mapScale = ClampPositive(mv.Camera.Scale);
+                relScale = ClampPositive(feet ? mapScale / 12.0 : mapScale / 100.0);
+                break;
+
+            case RecalcOrigin.PageX:
+                ComputeFromX();
+                mapScale = ClampPositive(mv.Camera.Scale);
+                relScale = ClampPositive(feet ? mapScale / 12.0 : mapScale / 100.0);
+                break;
+
+            case RecalcOrigin.RatioScale:
+                ComputeFromScale(isRatioPath: true);
+                break;
+
+            case RecalcOrigin.RelativeScale:
+                ComputeFromScale(isRatioPath: false);
+                break;
+
+            case RecalcOrigin.FormatChange:
+                if (_lastUserEditOrigin == RecalcOrigin.PageX)
+                {
+                    ComputeFromX();
+                    mapScale = ClampPositive(mv.Camera.Scale);
+                    relScale = ClampPositive(feet ? mapScale / 12.0 : mapScale / 100.0);
+                }
+                else if (_lastUserEditOrigin == RecalcOrigin.PageY)
+                {
+                    ComputeFromY();
+                    mapScale = ClampPositive(mv.Camera.Scale);
+                    relScale = ClampPositive(feet ? mapScale / 12.0 : mapScale / 100.0);
+                }
+                else
+                {
+                    ComputeFromScale(isRatioPath: true);
+                }
+
+                // NOTE: this overwrites user-entered scale on format change; kept as-is
+                mapScale = ClampPositive(mv.Camera.Scale);
+                relScale = ClampPositive(feet ? mapScale / 12.0 : mapScale / 100.0);
+                break;
+
+            default:
+                return new SizeScaleResult(inputX, inputY, inputMapScale, inputRelScale);
+        }
+
+        pageX = ClampPositive(MiscUtil.RoundToDecimalD(pageX));
+        pageY = ClampPositive(MiscUtil.RoundToDecimalD(pageY));
+        mapScale = ClampPositive(MiscUtil.RoundToDecimalD(mapScale));
+        relScale = ClampPositive(MiscUtil.RoundToDecimalD(relScale));
+
+        return new SizeScaleResult(pageX, pageY, mapScale, relScale);
+    });
+}
+Two tiny follow-ups I strongly recommend (but didn’t change above)
+Feet detection: right now you use srUnit.Name == "Foot_US" or MetersPerUnit ~ 0.305.
+
+0.3048 is international foot, 0.3048006096 is US survey foot.
+
+Your check 0.305 is a rough approx and can misclassify.
+Consider replacing with lu.UnitType == UnitTypeCode.Feet || lu.UnitType == UnitTypeCode.FeetUS.
+
+FormatChange overwrite: you currently compute from scale, then overwrite scale from camera.
+That can make it look like scale math is wrong. Consider only overwriting scale from camera when last user edit was PageX/PageY.
+
+If you want, I can produce a “behavior identical to Java” FormatChange switch block too.
+
+
+
+
+No file chosenNo file chosen
+ChatGPT can make mistakes. Check important info.
 
