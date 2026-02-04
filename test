@@ -1,1 +1,13 @@
+        // Smooth-ish drop based on size, but not too aggressive.
+        // This prevents “slamming to minPct” for large pages.
+        double larger = Math.Max(pageWidth, pageHeight);
 
+        // At 11 => 0.40, at 44 => about 0.28, then slowly approaches minPct
+        double t = (larger - 11.0) / (44.0 - 11.0); // 0..1-ish
+        t = Math.Max(0.0, Math.Min(1.5, t));        // allow a bit beyond 44
+
+        pct = basePct - (0.12 * Math.Min(1.0, t)) - (0.03 * Math.Max(0.0, t - 1.0));
+        // Explanation:
+        // - first 0..44 inches drops by up to 0.12 (0.40 -> 0.28)
+        // - beyond that, drop slowly (another up to ~0.03 if t goes to 2.0)
+    }
