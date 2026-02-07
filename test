@@ -1,13 +1,241 @@
-        // Smooth-ish drop based on size, but not too aggressive.
-        // This prevents “slamming to minPct” for large pages.
-        double larger = Math.Max(pageWidth, pageHeight);
+using ArcGIS.Core.CIM;
+using ArcGIS.Core.Geometry;
+using ArcGIS.Desktop.Framework.Threading.Tasks;
+using ArcGIS.Desktop.Layouts;
+using ArcGIS.Desktop.Mapping;
+using System;
+using System.Threading.Tasks;
 
-        // At 11 => 0.40, at 44 => about 0.28, then slowly approaches minPct
-        double t = (larger - 11.0) / (44.0 - 11.0); // 0..1-ish
-        t = Math.Max(0.0, Math.Min(1.5, t));        // allow a bit beyond 44
+namespace BasemappingPro.ui.maplayout
+{
+    /// <summary>
+    /// Factory for creating and managing overview map frames in layouts.
+    /// </summary>
+    public static class LayoutOverviewFactory
+    {
+        /// <summary>
+        /// Name used for the overview map frame element.
+        /// </summary>
+        public const string OverviewMapFrameName = "Overview Map Frame";
 
-        pct = basePct - (0.12 * Math.Min(1.0, t)) - (0.03 * Math.Max(0.0, t - 1.0));
-        // Explanation:
-        // - first 0..44 inches drops by up to 0.12 (0.40 -> 0.28)
-        // - beyond that, drop slowly (another up to ~0.03 if t goes to 2.0)
+        /// <summary>
+        /// Name used for the extent highlight rectangle.
+        /// </summary>
+        public const string ExtentHighlightName = "Main Extent Highlight";
+
+        /// <summary>
+        /// Default overview frame width in inches.
+        /// </summary>
+        public const double DefaultOverviewWidth = 3.0;
+
+        /// <summary>
+        /// Default overview frame height in inches.
+        /// </summary>
+        public const double DefaultOverviewHeight = 2.0;
+
+        // Color constants for extent highlight rectangle
+        private const int HighlightRed = 255;
+        private const int HighlightGreen = 0;
+        private const int HighlightBlue = 0;
+        private const int TransparentAlpha = 0;
+        private const double HighlightStrokeWidth = 1.5;
+
+        /// <summary>
+        /// Buffer factor for the overview extent (2x means the extent is doubled).
+        /// </summary>
+        public const double ExtentBufferFactor = 2.0;
+
+        /// <summary>
+        /// Builds or updates the overview map frame in the layout.
+        /// Places the overview in the top-right area of the page.
+        /// </summary>
+        /// <param name="layout">The layout to add the overview to.</param>
+        /// <param name="map">The map to create the overview from.</param>
+        /// <param name="mainMapExtent">The main map extent for highlighting.</param>
+        /// <param name="pageWidth">The page width in inches.</param>
+        /// <param name="pageHeight">The page height in inches.</param>
+        /// <param name="rightMargin">The right margin in inches.</param>
+        /// <param name="topMargin">The top margin in inches.</param>
+        /// <param name="hasLegend">Whether a legend is present (affects positioning).</param>
+        /// <returns>True if the overview was successfully added or updated.</returns>
+        /// 
+
+        public static async Task<bool> BuildOrUpdateOverviewAsync(
+        Layout layout,
+        Map map,
+        Envelope? mainMapExtent,
+        Envelope overviewEnvelope)
+        {
+            if (layout == null || map == null || overviewEnvelope == null)
+                return false;
+
+            return await QueuedTask.Run(() =>
+            {
+                try
+                {
+                    // Remove existing overview elements
+                    RemoveExistingOverviewElements(layout);
+
+                    // Create the overview map frame at the provided envelope
+                    var overviewFrame = ElementFactory.Instance.CreateMapFrameElement(
+                        layout,
+                        overviewEnvelope,
+                        map,
+                        OverviewMapFrameName);
+
+                    if (overviewFrame == null)
+                        return false;
+
+                    // Set the overview extent with buffer + highlight
+                    if (mainMapExtent != null)
+                    {
+                        SetOverviewExtent(overviewFrame, mainMapExtent);
+                        AddExtentHighlight(layout, overviewFrame, mainMapExtent, overviewEnvelope);
+                    }
+
+                    return true;
+                }
+                catch
+                {
+                    return false;
+                }
+            });
+        }
+
+        /// <summary>
+        /// Removes existing overview elements from the layout.
+        /// </summary>
+        private static void RemoveExistingOverviewElements(Layout layout)
+        {
+            try
+            {
+                var overviewFrame = layout.FindElement(OverviewMapFrameName);
+                if (overviewFrame != null)
+                {
+                    layout.DeleteElement(overviewFrame);
+                }
+
+                var highlightElement = layout.FindElement(ExtentHighlightName);
+                if (highlightElement != null)
+                {
+                    layout.DeleteElement(highlightElement);
+                }
+            }
+            catch
+            {
+                // Ignore errors when removing
+            }
+        }
+
+        /// <summary>
+        /// Sets the overview map frame extent with buffer.
+        /// </summary>
+        private static void SetOverviewExtent(MapFrame overviewFrame, Envelope mainMapExtent)
+        {
+            try
+            {
+                // Calculate buffered extent (2x the main extent)
+                double centerX = (mainMapExtent.XMin + mainMapExtent.XMax) / 2.0;
+                double centerY = (mainMapExtent.YMin + mainMapExtent.YMax) / 2.0;
+                double halfWidth = mainMapExtent.Width * ExtentBufferFactor / 2.0;
+                double halfHeight = mainMapExtent.Height * ExtentBufferFactor / 2.0;
+
+                var bufferedExtent = EnvelopeBuilderEx.CreateEnvelope(
+                    new Coordinate2D(centerX - halfWidth, centerY - halfHeight),
+                    new Coordinate2D(centerX + halfWidth, centerY + halfHeight),
+                    mainMapExtent.SpatialReference);
+                //var layout = LayoutView.Active?.Layout;
+                // Set the camera to show the buffered extent
+                var camera = overviewFrame.GetMapView(LayoutView.Active)?.Camera;
+                if (camera != null)
+                {
+                    camera.X = centerX;
+                    camera.Y = centerY;
+                    // Scale is adjusted based on the buffer factor
+                    camera.Scale *= ExtentBufferFactor;
+                }
+
+                overviewFrame.SetCamera(bufferedExtent);
+            }
+            catch
+            {
+                // Continue without setting extent if it fails
+            }
+        }
+
+        /// <summary>
+        /// Adds a highlight rectangle showing the main map extent in the overview.
+        /// </summary>
+        private static void AddExtentHighlight(
+            Layout layout, 
+            MapFrame overviewFrame, 
+            Envelope mainMapExtent,
+            Envelope overviewEnvelope)
+        {
+            try
+            {
+                // Create a simple red rectangle to highlight the main extent
+                // This is an approximation - in a full implementation, this would
+                // transform map coordinates to layout coordinates
+
+                // Calculate approximate position of main extent within overview frame
+                double overviewWidth = overviewEnvelope.Width;
+                double overviewHeight = overviewEnvelope.Height;
+
+                // The highlight should be centered and sized relative to the buffer factor
+                // Since buffer is 2x, the highlight should be about 1/2 the overview size
+                double highlightWidth = overviewWidth / ExtentBufferFactor;
+                double highlightHeight = overviewHeight / ExtentBufferFactor;
+
+                double highlightCenterX = (overviewEnvelope.XMin + overviewEnvelope.XMax) / 2.0;
+                double highlightCenterY = (overviewEnvelope.YMin + overviewEnvelope.YMax) / 2.0;
+
+                var highlightEnvelope = EnvelopeBuilderEx.CreateEnvelope(
+                    new Coordinate2D(highlightCenterX - highlightWidth / 2.0, highlightCenterY - highlightHeight / 2.0),
+                    new Coordinate2D(highlightCenterX + highlightWidth / 2.0, highlightCenterY + highlightHeight / 2.0));
+
+                // Create red outline symbol with transparent fill for extent highlight
+                var outlineSymbol = SymbolFactory.Instance.ConstructPolygonSymbol(
+                    ColorFactory.Instance.CreateRGBColor(HighlightRed, HighlightGreen, HighlightBlue, TransparentAlpha),
+                    SimpleFillStyle.Null,
+                    SymbolFactory.Instance.ConstructStroke(
+                        ColorFactory.Instance.CreateRGBColor(HighlightRed, HighlightGreen, HighlightBlue),
+                        HighlightStrokeWidth, 
+                        SimpleLineStyle.Solid));
+
+                ElementFactory.Instance.CreateGraphicElement(
+                    layout,
+                    highlightEnvelope,
+                    outlineSymbol,
+                    ExtentHighlightName);
+            }
+            catch
+            {
+                // Continue without highlight if it fails
+            }
+        }
+
+        /// <summary>
+        /// Calculates the adjusted main map frame height to avoid overlap with the overview.
+        /// </summary>
+        /// <param name="originalMapHeight">The original map frame height.</param>
+        /// <param name="overviewHeight">The overview frame height.</param>
+        /// <param name="hasOverview">Whether an overview is included.</param>
+        /// <param name="gap">Gap between map and overview.</param>
+        /// <returns>The adjusted map frame height.</returns>
+        public static double GetAdjustedMapHeight(
+            double originalMapHeight, 
+            double overviewHeight,
+            bool hasOverview,
+            double gap = 0.2)
+        {
+            if (!hasOverview)
+                return originalMapHeight;
+
+            // If the overview would overlap with the map frame top area,
+            // reduce the map frame height
+            double reduction = overviewHeight + gap;
+            return Math.Max(originalMapHeight - reduction, originalMapHeight * 0.5);
+        }
     }
+}
