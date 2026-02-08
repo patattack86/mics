@@ -1,241 +1,3762 @@
-using ArcGIS.Core.CIM;
-using ArcGIS.Core.Geometry;
-using ArcGIS.Desktop.Framework.Threading.Tasks;
-using ArcGIS.Desktop.Layouts;
-using ArcGIS.Desktop.Mapping;
-using System;
-using System.Threading.Tasks;
+package gov.doi.gis.timsmapping.framework.utils;
 
-namespace BasemappingPro.ui.maplayout
-{
-    /// <summary>
-    /// Factory for creating and managing overview map frames in layouts.
-    /// </summary>
-    public static class LayoutOverviewFactory
-    {
-        /// <summary>
-        /// Name used for the overview map frame element.
-        /// </summary>
-        public const string OverviewMapFrameName = "Overview Map Frame";
+import java.awt.Image;
+import java.awt.image.BufferedImage;
+import java.awt.print.PrinterException;
+import java.awt.print.PrinterJob;
+import java.io.BufferedReader;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileNotFoundException;
+import java.io.FileOutputStream;
+import java.io.FileReader;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.lang.reflect.Method;
+import java.net.URL;
+import java.net.URLClassLoader;
+import java.net.UnknownHostException;
+import java.nio.channels.FileChannel;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.text.DateFormat;
+import java.text.DecimalFormat;
+import java.text.NumberFormat;
+import java.text.ParseException;
+import java.text.SimpleDateFormat;
+import java.util.ArrayList;
+import java.util.Calendar;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map.Entry;
+import java.util.Set;
+import java.util.StringTokenizer;
+import java.util.logging.Level;
+import java.util.regex.Pattern;
 
-        /// <summary>
-        /// Name used for the extent highlight rectangle.
-        /// </summary>
-        public const string ExtentHighlightName = "Main Extent Highlight";
+import javax.imageio.ImageIO;
+import javax.print.Doc;
+import javax.print.DocFlavor;
+import javax.print.DocFlavor.INPUT_STREAM;
+import javax.print.DocPrintJob;
+import javax.print.PrintException;
+import javax.print.PrintService;
+import javax.print.PrintServiceLookup;
+import javax.print.ServiceUI;
+import javax.print.SimpleDoc;
+import javax.print.attribute.DocAttributeSet;
+import javax.print.attribute.HashDocAttributeSet;
+import javax.print.attribute.HashPrintRequestAttributeSet;
+import javax.print.attribute.PrintRequestAttributeSet;
+import javax.print.attribute.standard.Copies;
+import javax.print.attribute.standard.MediaSizeName;
+import javax.print.attribute.standard.OrientationRequested;
+import javax.swing.ImageIcon;
+import javax.swing.JOptionPane;
 
-        /// <summary>
-        /// Default overview frame width in inches.
-        /// </summary>
-        public const double DefaultOverviewWidth = 3.0;
+import org.apache.commons.lang3.text.WordUtils;
+import org.apache.pdfbox.pdmodel.PDDocument;
+import org.apache.pdfbox.printing.PDFPageable;
+//import org.apache.pdfbox.pdmodel.PDPageable;
 
-        /// <summary>
-        /// Default overview frame height in inches.
-        /// </summary>
-        public const double DefaultOverviewHeight = 2.0;
+import com.esri.arcgis.arcmapui.IMxApplication2;
+import com.esri.arcgis.arcmapui.IMxDocument;
+import com.esri.arcgis.arcmapui.MxDocument;
+import com.esri.arcgis.arcmapui.ProgressDialog;
+import com.esri.arcgis.carto.FeatureLayer;
+import com.esri.arcgis.carto.GroupLayer;
+import com.esri.arcgis.carto.IActiveView;
+import com.esri.arcgis.carto.ICompositeLayer;
+import com.esri.arcgis.carto.ICompositeLayerProxy;
+import com.esri.arcgis.carto.IDataLayer2;
+import com.esri.arcgis.carto.IDisplayTable;
+import com.esri.arcgis.carto.IElement;
+import com.esri.arcgis.carto.IEnumLayer;
+import com.esri.arcgis.carto.IFeatureLayer;
+import com.esri.arcgis.carto.IFeatureRenderer;
+import com.esri.arcgis.carto.IFrameElement;
+import com.esri.arcgis.carto.IGeoFeatureLayer;
+import com.esri.arcgis.carto.IGraphicsContainer;
+import com.esri.arcgis.carto.IGraphicsContainerSelect;
+import com.esri.arcgis.carto.ILayer;
+import com.esri.arcgis.carto.ILineElement;
+import com.esri.arcgis.carto.IMap;
+import com.esri.arcgis.carto.IMapFrame;
+import com.esri.arcgis.carto.IPageLayout;
+import com.esri.arcgis.carto.IUniqueValueRenderer;
+import com.esri.arcgis.carto.LineElement;
+import com.esri.arcgis.carto.Map;
+import com.esri.arcgis.carto.PageLayout;
+import com.esri.arcgis.carto.esriViewDrawPhase;
+import com.esri.arcgis.catalog.GxLayer;
+import com.esri.arcgis.catalog.IGxFile;
+import com.esri.arcgis.datasourcesGDB.InMemoryWorkspaceFactory;
+import com.esri.arcgis.display.ArrowMarkerSymbol;
+import com.esri.arcgis.display.CancelTracker;
+import com.esri.arcgis.display.CartographicLineSymbol;
+import com.esri.arcgis.display.IAppDisplay;
+import com.esri.arcgis.display.IArrowMarkerSymbol;
+import com.esri.arcgis.display.ICartographicLineSymbol;
+import com.esri.arcgis.display.IColor;
+import com.esri.arcgis.display.IDisplayTransformation;
+import com.esri.arcgis.display.ILineDecoration;
+import com.esri.arcgis.display.ILineProperties;
+import com.esri.arcgis.display.ILineSymbol;
+import com.esri.arcgis.display.IScreenDisplay;
+import com.esri.arcgis.display.ISymbol;
+import com.esri.arcgis.display.LineDecoration;
+import com.esri.arcgis.display.MultiLayerLineSymbol;
+import com.esri.arcgis.display.SimpleLineDecorationElement;
+import com.esri.arcgis.display.SimpleLineSymbol;
+import com.esri.arcgis.framework.IApplication;
+import com.esri.arcgis.framework.ICommandItem;
+import com.esri.arcgis.framework.IDockableWindow;
+import com.esri.arcgis.framework.IDockableWindowManager;
+import com.esri.arcgis.framework.IDockableWindowManagerProxy;
+import com.esri.arcgis.framework.IProgressDialog2;
+import com.esri.arcgis.framework.IProgressDialogFactory;
+import com.esri.arcgis.framework.ProgressDialogFactory;
+import com.esri.arcgis.framework.esriProgressAnimationTypes;
+import com.esri.arcgis.geodatabase.FeatureCursor;
+import com.esri.arcgis.geodatabase.ICursor;
+import com.esri.arcgis.geodatabase.IDatasetName;
+import com.esri.arcgis.geodatabase.IDatasetName2;
+import com.esri.arcgis.geodatabase.IFeature;
+import com.esri.arcgis.geodatabase.IFeatureClass;
+import com.esri.arcgis.geodatabase.IFeatureCursor;
+import com.esri.arcgis.geodatabase.IFeatureWorkspace;
+import com.esri.arcgis.geodatabase.IMemoryRelationshipClassFactory;
+import com.esri.arcgis.geodatabase.IObjectClass;
+import com.esri.arcgis.geodatabase.IObjectClassProxy;
+import com.esri.arcgis.geodatabase.IQueryDef;
+import com.esri.arcgis.geodatabase.IQueryFilter;
+import com.esri.arcgis.geodatabase.IQueryName2;
+import com.esri.arcgis.geodatabase.IRelQueryTableFactory;
+import com.esri.arcgis.geodatabase.IRelationshipClass;
+import com.esri.arcgis.geodatabase.IRow;
+import com.esri.arcgis.geodatabase.ITable;
+import com.esri.arcgis.geodatabase.ITableProxy;
+import com.esri.arcgis.geodatabase.IWorkspace;
+import com.esri.arcgis.geodatabase.IWorkspaceFactory;
+import com.esri.arcgis.geodatabase.IWorkspaceName;
+import com.esri.arcgis.geodatabase.IWorkspaceName2;
+import com.esri.arcgis.geodatabase.MemoryRelationshipClassFactory;
+import com.esri.arcgis.geodatabase.QueryFilter;
+import com.esri.arcgis.geodatabase.RelQueryTableFactory;
+import com.esri.arcgis.geodatabase.TableQueryName;
+import com.esri.arcgis.geometry.Envelope;
+import com.esri.arcgis.geometry.IEnvelope;
+import com.esri.arcgis.geometry.IEnvelopeGEN;
+import com.esri.arcgis.geometry.IGeographicCoordinateSystem;
+import com.esri.arcgis.geometry.ILinearUnit;
+import com.esri.arcgis.geometry.IPolyline;
+import com.esri.arcgis.geometry.IProjectedCoordinateSystem;
+import com.esri.arcgis.geometry.ISpatialReference;
+import com.esri.arcgis.geometry.ISpatialReferenceFactory;
+import com.esri.arcgis.geometry.IUnit;
+import com.esri.arcgis.geometry.Polyline;
+import com.esri.arcgis.geometry.SpatialReferenceEnvironment;
+import com.esri.arcgis.geometry.esriGeometryType;
+import com.esri.arcgis.geometry.esriSRUnitType;
+import com.esri.arcgis.interop.AutomationException;
+import com.esri.arcgis.interop.Cleaner;
+import com.esri.arcgis.system.IName;
+import com.esri.arcgis.system.IPropertySet;
+import com.esri.arcgis.system.IStatusBar;
+import com.esri.arcgis.system.IStepProgressor;
+import com.esri.arcgis.system.IUID;
+import com.esri.arcgis.system.UID;
+import com.esri.arcgis.system.esriUnits;
+import com.esri.arcgis.system.tagRECT;
 
-        // Color constants for extent highlight rectangle
-        private const int HighlightRed = 255;
-        private const int HighlightGreen = 0;
-        private const int HighlightBlue = 0;
-        private const int TransparentAlpha = 0;
-        private const double HighlightStrokeWidth = 1.5;
+import gov.doi.gis.timsmapping.framework.db.SDEManager;
+import gov.doi.gis.timsmapping.framework.nativeaccess.BmUser32Callback;
+import gov.doi.gis.timsmapping.framework.toolsutils.maplayouts.MapLayoutConstants;
 
-        /// <summary>
-        /// Buffer factor for the overview extent (2x means the extent is doubled).
-        /// </summary>
-        public const double ExtentBufferFactor = 2.0;
+/**
+ * This class contains handy and re-usable methods.
+ * 
+ * @author moghaddb
+ * 
+ */
+public class MiscUtil {
 
-        /// <summary>
-        /// Builds or updates the overview map frame in the layout.
-        /// Places the overview in the top-right area of the page.
-        /// </summary>
-        /// <param name="layout">The layout to add the overview to.</param>
-        /// <param name="map">The map to create the overview from.</param>
-        /// <param name="mainMapExtent">The main map extent for highlighting.</param>
-        /// <param name="pageWidth">The page width in inches.</param>
-        /// <param name="pageHeight">The page height in inches.</param>
-        /// <param name="rightMargin">The right margin in inches.</param>
-        /// <param name="topMargin">The top margin in inches.</param>
-        /// <param name="hasLegend">Whether a legend is present (affects positioning).</param>
-        /// <returns>True if the overview was successfully added or updated.</returns>
-        /// 
+	private static String file_name = "\n" + MiscUtil.class.getSimpleName()
+			+ "==> ";
 
-        public static async Task<bool> BuildOrUpdateOverviewAsync(
-        Layout layout,
-        Map map,
-        Envelope? mainMapExtent,
-        Envelope overviewEnvelope)
+	public MiscUtil() {
+	}
+
+	
+	
+	
+	/**
+	 * Beheen 7/23/13 - US #34973
+	 * This method draws arrow on the line features of the
+	 * input line feature layer with the same color of the
+	 * lines.
+	 * 
+	 * Cartographic line symbols 
+	 * Does the following steps to make a cartographic line symbol:
+	 * 1. Create a cartographic line symbol and set its properties.
+	 * 2. Create an ILineProperties object to set additional properties
+	 * 3. Add the mark and gap patterns into the template.
+	 * 4. Set the cartographic line properties.
+	 * 5. Color the line red.
+	 * 
+	 * @param lineFeatureLayer
+	 * @return string of a message: bad feature | success
+	 * @throws IOException 
+	 * @throws UnknownHostException 
+	 * @throws AutomationException 
+	 */
+	
+	
+	public static String drawLineArrow(FeatureLayer lineFeatureLayer, String whereClause)
+			         throws AutomationException, UnknownHostException, IOException {
+		
+		
+		if(lineFeatureLayer.getFeatureClass().getShapeType() != esriGeometryType.esriGeometryPolyline) 
+			return TimsConstants.DRAW_ARROW_FL_MSG;
+		
+		IGeoFeatureLayer geoFeatureLayer = (IGeoFeatureLayer) lineFeatureLayer;
+        IFeatureRenderer featureRenderer = geoFeatureLayer.getRenderer();
+		
+		if(!(featureRenderer instanceof IUniqueValueRenderer)) 
+			return TimsConstants.DRAW_ARROW_REN_MSG ;
+		
+	 
+		IDisplayTable pDisplayTable = lineFeatureLayer;
+		IQueryFilter queryFilter = new QueryFilter();
+		queryFilter.setWhereClause(whereClause);
+		ICursor pCursor = pDisplayTable.searchDisplayTable(queryFilter, false);
+		FeatureCursor pFeatureCursor = new FeatureCursor(pCursor);
+		IFeature pFeature = pFeatureCursor.nextFeature();
+		
+	
+		// change the symbols	
+		IUniqueValueRenderer pUniqueValueRenderer = (IUniqueValueRenderer) featureRenderer;
+	    
+		// find the direction per feature
+		// 0 = None, 1= left arrow, 2= right arrow, 3= bidirectional
+		int direction = 3;	
+		while(pFeature != null) {
+			ISymbol symbol = featureRenderer.getSymbolByFeature(pFeature);
+			if(symbol instanceof SimpleLineSymbol) {
+
+				SimpleLineSymbol lineSymbol = (SimpleLineSymbol) symbol;
+				System.out.println(file_name + " 3 - " + lineSymbol.getMapLevel());
+				
+				// save the old properties to transfer to new symbol
+				IColor lineColor = lineSymbol.getColor();
+				double width = lineSymbol.getWidth();
+
+				// arrow symbol
+				IArrowMarkerSymbol pArrowSym = new ArrowMarkerSymbol();
+				pArrowSym.setSize(8);
+				pArrowSym.setLength(12);
+				pArrowSym.setWidth(6);
+				//Add an offset to make sure the square end of the line is hidden
+				pArrowSym.setXOffset(0.8);
+				pArrowSym.setColor(lineColor);
+				
+				// Set the cartographic line decoration property.
+				SimpleLineDecorationElement lineDecElement = new SimpleLineDecorationElement();	
+				
+				// marker symbols are rotated to follow the line
+				lineDecElement.setRotate(true);				
+				lineDecElement.setMarkerSymbol(pArrowSym);
+				// set the direction of the arrow
+			    lineDecElement.addPosition(1);
+			    
+				 //Define line decoration for the arrow
+			    ILineDecoration lineDecoration = new LineDecoration();
+			    lineDecoration.addElement(lineDecElement);	
+			    
+				// Make a new cartographic line symbol and set its properties.
+				CartographicLineSymbol cartographicLineSymbol = new CartographicLineSymbol();
+				// Set the cartographic line properties.
+				cartographicLineSymbol.setWidth(width);
+				cartographicLineSymbol.setColor(lineColor);
+				// To set additional properties like offsets and dash patterns, create an ILineProperties object.
+				ILineProperties lineProperties = (ILineProperties) cartographicLineSymbol;	
+				lineProperties.setLineDecorationByRef(lineDecoration);
+				//lineFeatureLayer.
+				//pUniqueValueRenderer.setSymbol(xv, cartographicLineSymbol);
+			//}  // end of simpleline
+			//pFeature = pFeatureCursor.nextFeature();
+		}
+		
+//		// change the symbols	
+//		IUniqueValueRenderer pUniqueValueRenderer = (IUniqueValueRenderer) featureRenderer;
+		
+		for (int j = 0; j <= pUniqueValueRenderer.getValueCount() - 1; j++)
         {
-            if (layout == null || map == null || overviewEnvelope == null)
-                return false;
+            
+			String xv = pUniqueValueRenderer.getValue(j);
+			ISymbol symbol2 = pUniqueValueRenderer.getSymbol(xv);
+			System.out.println(file_name + xv) ;
+					
+			if(symbol instanceof SimpleLineSymbol) {
 
-            return await QueuedTask.Run(() =>
-            {
-                try
-                {
-                    // Remove existing overview elements
-                    RemoveExistingOverviewElements(layout);
+				SimpleLineSymbol lineSymbol = (SimpleLineSymbol) symbol;
+				System.out.println(file_name + " 3 - " + lineSymbol.getMapLevel());
+				
+				// save the old properties to transfer to new symbol
+				IColor lineColor = lineSymbol.getColor();
+				double width = lineSymbol.getWidth();
 
-                    // Create the overview map frame at the provided envelope
-                    var overviewFrame = ElementFactory.Instance.CreateMapFrameElement(
-                        layout,
-                        overviewEnvelope,
-                        map,
-                        OverviewMapFrameName);
+				// arrow symbol
+				IArrowMarkerSymbol pArrowSym = new ArrowMarkerSymbol();
+				pArrowSym.setSize(8);
+				pArrowSym.setLength(12);
+				pArrowSym.setWidth(6);
+				//Add an offset to make sure the square end of the line is hidden
+				pArrowSym.setXOffset(0.8);
+				pArrowSym.setColor(lineColor);
+				
+				// Set the cartographic line decoration property.
+				SimpleLineDecorationElement lineDecElement = new SimpleLineDecorationElement();	
+				
+				// marker symbols are rotated to follow the line
+				lineDecElement.setRotate(true);				
+				lineDecElement.setMarkerSymbol(pArrowSym);
+				// set the direction of the arrow
+			    lineDecElement.addPosition(1);
+			    
+				 //Define line decoration for the arrow
+			    ILineDecoration lineDecoration = new LineDecoration();
+			    lineDecoration.addElement(lineDecElement);	
+			    
+				// Make a new cartographic line symbol and set its properties.
+				CartographicLineSymbol cartographicLineSymbol = new CartographicLineSymbol();
+				// Set the cartographic line properties.
+				cartographicLineSymbol.setWidth(width);
+				cartographicLineSymbol.setColor(lineColor);
+				// To set additional properties like offsets and dash patterns, create an ILineProperties object.
+				ILineProperties lineProperties = (ILineProperties) cartographicLineSymbol;	
+				lineProperties.setLineDecorationByRef(lineDecoration);
+				pUniqueValueRenderer.setSymbol(xv, cartographicLineSymbol);
+			}  // end of simpleline
+			
+			else if(symbol instanceof MultiLayerLineSymbol) {
+				
+				MultiLayerLineSymbol muliti = (MultiLayerLineSymbol) symbol;
+				
+				int cnt = muliti.getLayerCount();
+				
+				for(int ii=0; ii< cnt; ii++) {
+					
+					ISymbol iSymbol = (ISymbol) muliti.getLayer(ii);
+					
+					
+					if(iSymbol instanceof SimpleLineSymbol) {						
+						SimpleLineSymbol lineSymbol = (SimpleLineSymbol) iSymbol;
+						System.out.println(file_name + " 1 - " + lineSymbol.getMapLevel());
+					}
+					
+					else if(iSymbol instanceof CartographicLineSymbol) {
+						
+						CartographicLineSymbol cartographicLineSymbol = (CartographicLineSymbol) iSymbol;
+						System.out.println("2 - " + cartographicLineSymbol.getMapLevel());
+						
+						IColor lineColor = cartographicLineSymbol.getColor();
+						
+						// arrow symbol
+						IArrowMarkerSymbol pArrowSym = new ArrowMarkerSymbol();
+						pArrowSym.setSize(8);
+						pArrowSym.setLength(12);
+						pArrowSym.setWidth(6);
+						//Add an offset to make sure the square end of the line is hidden
+						pArrowSym.setXOffset(0.8);
+						pArrowSym.setColor(lineColor);
+											 
+					    ILineDecoration lineDecoration = null;
+					    ILineProperties lineProperties = cartographicLineSymbol;
+					    if(lineProperties.getLineDecoration() == null)
+					    	//Define line decoration for the arrow
+						    lineDecoration = new LineDecoration();
+					    
+						if(lineDecoration.getElementCount() > 0)
+							lineDecoration.clearElements();
+						
+						 // Set the cartographic line decoration property.
+						SimpleLineDecorationElement lineDecElement = new SimpleLineDecorationElement();	
+						// marker symbols are rotated to follow the line
+						lineDecElement.setRotate(true);	
+						lineDecElement.setMarkerSymbol(pArrowSym);
+						// set the direction of the arrow
+					    lineDecElement.addPosition(2.0);
+					    lineDecoration.addElement(lineDecElement);
+					    
+					    lineProperties.setLineDecorationByRef(lineDecoration);
+					    pUniqueValueRenderer.setSymbol(xv, cartographicLineSymbol);
+					}
+					
+					else {
+						
+						return TimsConstants.DRAW_ARROW_UNSUPORRTED_MSG + symbol.getClass().getName();
+					}
+				} 
+			} // end of CartographicLine
+			
+			else {
+				
+				return TimsConstants.DRAW_ARROW_UNSUPORRTED_MSG + symbol.getClass().getName();
+			}
+					
+            
+//					
+//					//style = only solid style in simple line symbol
+//					IGeometry lineGeo = pFeature.getShape();
+//					IPolyline polyline = (IPolyline) lineGeo;
+//					
+					
+					// unique value field in pipeline table
+//			        String fieldName = "SDE_PLOT_CODE";
+//			        System.out.println(pUniqueValueRenderer.getFieldCount());
+//			        
+//			        pUniqueValueRenderer.setField(0, fieldName);
+//			        int fieldIndex = pFeature.getFields().findField(fieldName);
+//			        System.out.println(fieldIndex);
+//			        
+//                    //String classValue = (String) pFeature.getValue(fieldIndex);
+//					//pUniqueValueRenderer.setSymbol(classValue, cartographicLineSymbol);
+//                    System.out.println(pFeature.getValue(fieldIndex));
+                    
+					
 
-                    if (overviewFrame == null)
-                        return false;
 
-                    // Set the overview extent with buffer + highlight
-                    if (mainMapExtent != null)
-                    {
-                        SetOverviewExtent(overviewFrame, mainMapExtent);
-                        AddExtentHighlight(layout, overviewFrame, mainMapExtent, overviewEnvelope);
-                    }
+					
+																	
+					
+				   
+				    
+				    
+				    
+//					
+//				    //Define line element
+//				    ILineElement lineElement = new LineElement();
+//				    lineElement.setSymbol((ILineSymbol)cartographicLineSymbol);
+//				    
+//				    
+//				    IPolyline polyline1 = new Polyline();
+//				    polyline1.setFromPoint(polyline.getFromPoint());
+//				    polyline1.setToPoint(polyline.getToPoint());
+//
+//				    System.out.println(polyline1.getFromPoint().getX() + ", " + polyline1.getToPoint().getY());
+//				    //Create the line geometry
+//				    IElement element = (IElement) lineSymbol;
+//				    //Cast to Element and set geometry
+//				    element = (IElement)lineElement;
+//				    element.setGeometry(polyline1);
+//			        
+//				   
+//				    //Add element to graphics container
+//				    MxDocument mxd = (MxDocument) TimsGlobals.app.getDocument();
+//					Map map = (Map) mxd.getActiveView().getFocusMap();
+//				    IGraphicsContainer graphicsContainer = map.getGraphicsContainer();
+//				    graphicsContainer.addElement(element, 0);
+//
+//				    //Clear the graphics selection (graphics are selected when added)
+//				    IGraphicsContainerSelect graphicsContainerSelect = (IGraphicsContainerSelect)graphicsContainer;
+//				    graphicsContainerSelect.unselectAllElements();
+//				    mxd.getActiveView().refresh();
+//				    mxd.updateContents();
+//				}  // end of if
+//				
+				//setCartographicLineSymbol(polyline, lineColor, width, direction) ;
+				//pFeature = pFeatureCursor.nextFeature();
+				
+				
+			}  // end of else if
+						
+		    
+	    }  // end of for
+		
+		return "Success";
+		
+	}
 
-                    return true;
-                }
-                catch
-                {
-                    return false;
-                }
-            });
+
+
+	
+	
+	
+	public static void setCartographicLineSymbol(IPolyline polyline, IColor lineColor, double width, int direction) throws UnknownHostException, IOException {
+		
+		// arrow symbol
+		IArrowMarkerSymbol pArrowSym = new ArrowMarkerSymbol();
+		pArrowSym.setSize(12);
+		pArrowSym.setLength(12);
+		pArrowSym.setWidth(8);
+		
+		//Add an offset to make sure the square end of the line is hidden
+		pArrowSym.setXOffset(0.8);
+
+		// make the arrow head same color of the line
+		pArrowSym.setColor(lineColor);
+		
+		// Set the cartographic line decoration property.
+		SimpleLineDecorationElement lineDecElement = new SimpleLineDecorationElement();	
+		
+		// marker symbols are rotated to follow the line
+		lineDecElement.setRotate(true);
+		
+		// set the direction of the arrow
+	    lineDecElement.addPosition(direction);
+	    
+		lineDecElement.setMarkerSymbol(pArrowSym);	
+		
+		// Make a new cartographic line symbol and set its properties.
+		ICartographicLineSymbol cartographicLineSymbol = new CartographicLineSymbol();
+		// Set the cartographic line properties.
+		cartographicLineSymbol.setWidth(width);
+		cartographicLineSymbol.setColor(lineColor);		
+		
+		// To set additional properties like offsets and dash patterns, create an ILineProperties object.
+		ILineProperties lineProperties = (ILineProperties) cartographicLineSymbol;
+										
+		
+	    //Define line decoration for the arrow
+	    ILineDecoration lineDecoration = new LineDecoration();
+	    lineDecoration.addElement(lineDecElement);
+	    lineProperties.setLineDecorationByRef(lineDecoration);
+		
+	    //Define line element
+	    ILineElement lineElement = new LineElement();
+	    lineElement.setSymbol((ILineSymbol)cartographicLineSymbol);
+
+	    IPolyline polyline1 = new Polyline();
+	    polyline1.setFromPoint(polyline.getFromPoint());
+	    polyline1.setToPoint(polyline.getToPoint());
+
+	    System.out.println(polyline1.getFromPoint().getX() + ", " + polyline1.getToPoint().getY());
+	    //Create the line geometry
+	    IElement element = (IElement) lineElement;
+	    //Cast to Element and set geometry
+	    element = (IElement)lineElement;
+	    element.setGeometry(polyline1);
+        
+	    //Add element to graphics container
+	    MxDocument mxd = (MxDocument) TimsGlobals.app.getDocument();
+		Map map = (Map) mxd.getActiveView().getFocusMap();
+	    IGraphicsContainer graphicsContainer = map.getGraphicsContainer();
+	    graphicsContainer.addElement(element, 0);
+
+	    //Clear the graphics selection (graphics are selected when added)
+	    IGraphicsContainerSelect graphicsContainerSelect = (IGraphicsContainerSelect)graphicsContainer;
+	    graphicsContainerSelect.unselectAllElements();
+	    mxd.getActiveView().refresh();
+	    mxd.updateContents();
+	}
+	
+	
+	
+	/**
+	 * formats a double to formatString
+	 * 
+	 * @param d
+	 *            - number to format
+	 * @param formatString
+	 *            - format string such as "#,##0.0#" and "0.0###"
+	 * @return value in formatted string
+	 */
+	public static String formatDouble(double d, String formatString) {
+		NumberFormat formatter = new DecimalFormat(formatString);
+		String f = formatter.format(d);
+		return f;
+	}
+
+	/**
+	 * How to join data 
+	 * Once the QueryDef is defined, you can use the TableQueryName 
+	 * class to create the QueryTable. The following code example  
+	 * a function that takes a QueryDef, the geodatabase workspace 
+	 * containing the tables, and the name of the new QueryTable. 
+	 * It also takes an argument for the comma-delimited list of 
+	 * key fields to use to manufacture the object IDs. If this is 
+	 * not an option, you can set the makeCopy parameter to true 
+	 * and provide an empty string for the key fields.
+	 * @param queryDef
+	 * @param keyFields
+	 * @param makeCopy
+	 * @param workspaceName
+	 * @param tableName
+	 * @return
+	 * @throws Exception
+	 */
+	public static ITable makeTableQuery(IQueryDef queryDef, String keyFields, boolean makeCopy,
+										IWorkspaceName workspaceName, String tableName)throws Exception{
+	    // Make the new TableQueryName.
+	    IQueryName2 queryName2 = new TableQueryName(); // REL
+	    queryName2.setQueryDef(queryDef);
+	    queryName2.setPrimaryKey(keyFields);
+	    queryName2.setCopyLocally(makeCopy);
+	    // Set the workspace and name of the new QueryTable.
+	    IDatasetName datasetName = (IDatasetName)queryName2;
+	    datasetName.setWorkspaceNameByRef(workspaceName);
+	    datasetName.setName(tableName);
+	    // Open and return the table.
+	    IName name = (IName)queryName2;
+	    ITable table = new ITableProxy(name.open());
+	    return table;
+	}
+	
+		     
+	
+	/*
+	 * 
+	 * Target Table:	SDETABS.ROYALTY_BLOCKS_2005_SDE
+	 * Target Field:	ROYALTY_RELIEF_WD_INTV_CD
+	 * Join Table:		TIMSSUPPORT.DOMAIN_VALUES
+	 * Join Field:		VALUE
+	 * Join Type:		Keep only matching records
+	 * Data Type:		Standalone Table
+	 * SERVER:			10.20.213.102
+	 * INSTANCE:		5163
+	 * Location:		GULF
+	 * AUTHENTICATION_MODE:	DBMS
+	 * USER:			moghaddb
+	 * VERSION:			SDE.DEFAULT
+	 */
+	public static IQueryDef createJoin(IFeatureWorkspace featureWorkspace) {
+    
+		
+		// Create the query definition.
+		IQueryDef queryDef = null;
+		try {
+			queryDef = featureWorkspace.createQueryDef();
+			
+			// Provide a list of tables to join.
+			queryDef.setTables("TIMSTABS.PPL_ASBUILTS_SDE_VIEW, TIMSTABS.PPL_APPURTENANCES");
+	    
+			// Set the subfields and the where clause (the join condition in this case).
+			queryDef.setSubFields("TIMSTABS.PPL_ASBUILTS_SDE_VIEW.SQ_ASBUILTS, " +
+					              "TIMSTABS.PPL_APPURTENANCES.SQ_ASBUILTS_FK");
+			queryDef.setWhereClause("TIMSTABS.PPL_ASBUILTS_SDE_VIEW.SQ_ASBUILTS = TIMSTABS.PPL_APPURTENANCES.SQ_ASBUILTS_FK");
+	    
+		
+			// Get a cursor of the results and find the indexes of the fields to display.
+//			ICursor cursor = queryDef.evaluate();
+//			Integer streetsNameIndex = cursor.findField("TIMSTABS.PPL_ASBUILTS_SDE_VIEW.SQ_ASBUILTS");
+//			Integer altnameNameIndex = cursor.findField("TIMSTABS.PPL_APPURTENANCES.SQ_ASBUILTS_FK");
+//				    
+//			// Use the cursor to step through the results, 
+//			// displaying the names and altnames of each street.
+//			IRow row = cursor.nextRow();
+//			while( row != null)  {
+//				System.out.println(row.getValue(streetsNameIndex) + ", " +
+//						           row.getValue(altnameNameIndex));
+//				row = cursor.nextRow();
+//			}
+			
+			
+		} catch (AutomationException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		} catch (IOException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
+    
+		return queryDef;
+	}
+	
+
+
+	
+                                  
+	public static ITable createRelQueryTable(ITable targetTable, ITable joinTable, 
+		    								 String fromField, String toField,
+		    								 int cardinality) throws Exception{
+	    // Build a memory relationship class.
+	    IMemoryRelationshipClassFactory memRelClassFactory = new MemoryRelationshipClassFactory();
+	    //Create object class for the tables since table cannot be cast to object class
+	    IObjectClass targetClass = new IObjectClassProxy(targetTable);
+	    IObjectClass joinClass = new IObjectClassProxy(joinTable);
+	    IRelationshipClass relationshipClass = memRelClassFactory.open("MemRelClass",
+	                                           targetClass, fromField, joinClass, toField, "forward", "backward",
+	                                           cardinality);
+	    //Open the RelQueryTable as a feature class.
+	    IRelQueryTableFactory rqtFactory = new RelQueryTableFactory();
+	    ITable relQueryTable = (ITable)rqtFactory.open(relationshipClass, true, null,
+	        null, "", false, false);
+	    return relQueryTable;
+	}
+
+
+	/**
+	 * 
+	 * <p>
+	 * Strips the extension from a filename.
+	 * </p>
+	 * 
+	 * @param filename
+	 * @return
+	 */
+	public static String stripExtension(String filename) {
+
+		// Handle null case specially.
+		if (filename == null)
+			return null;
+
+		// Get position of last '.'.
+		int pos = filename.lastIndexOf(".");
+
+		// If no extension, just return the filename
+		if (pos == -1)
+			return filename;
+
+		// Otherwise return the string, up to the last period.
+		return filename.substring(0, pos);
+	}
+
+	/**
+	 * 
+	 * <p>
+	 * Creates a directory at <code>dirName</code>. If <code>dirName</code>
+	 * already exists, adds <code>_Version#</code> to the end of the originally
+	 * specified name, where # is the next number in the scheme at that
+	 * location.
+	 * </p>
+	 * 
+	 * 
+	 * @param dirName
+	 * @return
+	 */
+	public static String createDir(String dirName) {
+
+		File dir;
+
+		dir = new File(MiscUtil.getNewFilename(dirName));
+
+		dir.mkdir();
+
+		return dirName;
+
+	}
+
+	/**
+	 * 
+	 * <p>
+	 * Returns a filename, possibly just <code>filename</code>. If
+	 * <code>filename</code> already exists, adds <code>_Version#</code> to the
+	 * end of the originally specified name, where # is the next number in the
+	 * scheme at that location.
+	 * </p>
+	 * 
+	 * @param filename
+	 * @return
+	 */
+	public static String getNewFilename(String filename) {
+
+		int count;
+		File file;
+		String newFilename;
+
+		count = 2;
+		file = new File(filename);
+		newFilename = filename;
+
+		while (file.exists()) {
+
+			newFilename = MiscUtil.stripExtension(filename) + "_Version"
+					+ count++ + "." + MiscUtil.getFileExtension(filename);
+			file = new File(newFilename);
+
+		}
+
+		return newFilename;
+
+	}
+
+	/**
+	 * 
+	 * <p>
+	 * Returns the extension of the given file. Returns null if there is no such
+	 * extension.
+	 * </p>
+	 * 
+	 * @param filename
+	 * @return
+	 */
+	public static String getFileExtension(String filename) {
+
+		int position;
+		String fileExtension = null;
+		String[] tokens;
+
+		File file;
+
+		file = new File(filename);
+
+		// Get position of last '.'
+		position = filename.lastIndexOf(".");
+
+		// If there IS an extension, it's the last token in the list created
+		// when splitting filename on a period (dot or . ).
+		if (position != -1) {
+			System.out.println(file.getName());
+			tokens = file.getName().split("\\.");
+			fileExtension = tokens[tokens.length - 1];
+		}
+
+		return fileExtension;
+	}
+
+	public static String todaysDate() {
+		String DATE_FORMAT_NOW = "EEE, d MMM yyyy HH:mm";
+
+		Calendar cal = Calendar.getInstance();
+		SimpleDateFormat sdf = new SimpleDateFormat(DATE_FORMAT_NOW);
+		return sdf.format(cal.getTime());
+	}
+
+	/**
+	 * Validate date and its format.
+	 * 
+	 * @param date_str
+	 *            - the date string that matches the index of the dateFormats
+	 *            hashmap.
+	 * 
+	 * @return the date string, if correct date and format, else returns null
+	 *         which means either invalid date or bad format.
+	 * 
+	 * @see note that this method is designed to return a date in a specified
+	 *      format that can be used to compare with a date in database field.
+	 *      Since the date fields may differ in format, thus the format
+	 *      argument!
+	 */
+	public static String validateDate(String dd, String mon, String yyyy,
+			int format) {
+
+		// map of different allowable java date formats
+		// http://java.sun.com/j2se/1.4.2/docs/api/index.html
+		HashMap<Integer, String> dateFormats = new HashMap<Integer, String>();
+		dateFormats.put(0, "dd-MMM-yyyy");
+		dateFormats.put(1, "M/d/yyyy");
+		dateFormats.put(2, "yyyy-MMM-dd");
+		dateFormats.put(3, "dd.MM.yyyy");
+
+		// holds user's formatted date
+		String date_str = null;
+		// java date formatter,
+		DateFormat formatter = null;
+		// holds converted date string
+		Date date = null;
+
+		// all 3 fields must have value otherwise returns null as
+		// if it is error
+		if (dd.isEmpty() && mon.isEmpty() && yyyy.isEmpty())
+			return null;
+		// date argument is good
+		else {
+
+			if (format == 0 && dateFormats.containsKey(format)) {
+				date_str = dd + "-" + mon + "-" + yyyy;
+				formatter = new SimpleDateFormat(dateFormats.get(format));
+			} else if (format == 1 && dateFormats.containsKey(format)) {
+				date_str = mon + "/" + dd + "/" + yyyy;
+				formatter = new SimpleDateFormat(dateFormats.get(format));
+			} else if (format == 2 && dateFormats.containsKey(format)) {
+				if (dd.length() == 1)
+					dd = "0" + dd;
+				if (mon.length() > 3) {
+					mon = mon.substring(0, 3);
+				}
+				if (mon.equalsIgnoreCase("jan"))
+					mon = "Jan";
+				else if (mon.equalsIgnoreCase("feb"))
+					mon = "Feb";
+				else if (mon.equalsIgnoreCase("mar"))
+					mon = "Mar";
+				else if (mon.equalsIgnoreCase("apr"))
+					mon = "Apr";
+				else if (mon.equalsIgnoreCase("may"))
+					mon = "May";
+				else if (mon.equalsIgnoreCase("jun"))
+					mon = "Jun";
+				else if (mon.equalsIgnoreCase("jul"))
+					mon = "Jul";
+				else if (mon.equalsIgnoreCase("aug"))
+					mon = "Aug";
+				else if (mon.equalsIgnoreCase("sep"))
+					mon = "Sep";
+				else if (mon.equalsIgnoreCase("oct"))
+					mon = "Oct";
+				else if (mon.equalsIgnoreCase("nov"))
+					mon = "Nov";
+				else if (mon.equalsIgnoreCase("DEC"))
+					mon = "Dec";
+
+				date_str = yyyy + "-" + mon + "-" + dd;
+				formatter = new SimpleDateFormat(dateFormats.get(format));
+			} else if (format == 3 && dateFormats.containsKey(format)) {
+				date_str = dd + "." + mon + "." + yyyy;
+				formatter = new SimpleDateFormat(dateFormats.get(format));
+			}
+
+			// parse the date string into date form
+			try {
+				date = formatter.parse(date_str);
+			}
+			// if the format of the string provided doesn't match the format we
+			// declared in SimpleDateFormat() we will get an exception
+			catch (ParseException e) {
+				String msg = TimsConstants.INVALID_DATE_FORMAT + date_str
+						+ "\n" + e.getMessage();
+				TimsGlobals.BMLogger.log(Level.WARNING, msg);
+				TimsGlobals.BMDialog.showError(msg);
+				return null;
+			}
+
+			// dateformat.parse will accept any date as long as it's in the
+			// format
+			// defined above, it simply rolls dates over, for example, december
+			// 32
+			// becomes jan 1 and december 0 becomes november 30
+			// This statement will make sure that once the string
+			// has been checked for proper formatting that the date is still the
+			// date that was entered, if it's not, we assume that the date is
+			// invalid
+			if (!formatter.format(date).equals(date_str)) {
+				String msg = TimsConstants.INVALID_DATE + date_str + "\n";
+				TimsGlobals.BMLogger.log(Level.WARNING, msg);
+				TimsGlobals.BMDialog.showError(msg);
+				return null;
+			}
+
+			return formatter.format(date);
+		}
+	}
+
+	/**
+	 * Compares two dates in the same format (i.e. dd-mon-yyyy)
+	 * 
+	 * @param date1
+	 *            - the future date string
+	 * @param date2
+	 *            - the current or past date string
+	 * @return
+	 * @return 1 if date1 > date2
+	 * @return -1 if date1 < date2
+	 * @return 0 if both are equal
+	 * @return -2 if error
+	 * @throws ParseException
+	 * 
+	 */
+	public static int compareDate(String date1, String date2, String format) {
+		SimpleDateFormat formatter = new SimpleDateFormat(format);
+
+		try {
+			if (formatter.parse(date1).compareTo(formatter.parse(date2)) > 0) {
+				return 1;
+			} else if (formatter.parse(date1).compareTo(formatter.parse(date2)) < 0) {
+				return -1;
+			} else if (formatter.parse(date1).compareTo(formatter.parse(date2)) == 0) {
+				return 0;
+			}
+		} catch (ParseException e) {
+			String msg = TimsConstants.DATE_NOT_COMPERABLE + date1 + ", "
+					+ date2 + ", " + format;
+			msg += "\n" + e.getMessage();
+			TimsGlobals.BMLogger.log(Level.WARNING, msg);
+			TimsGlobals.BMDialog.showError(msg);
+			return -2;
+		}
+		return -2;
+	}
+
+	/**
+	 * This method uses JAVA PrintServiceLookup to print a PDF file to the local
+	 * default printer in landscape format.
+	 * 
+	 * @param file
+	 *            to be printed
+	 */
+	public static void printPdf(File file) {
+
+		FileInputStream fis;
+
+		PrinterJob job;
+		PrintService defaultService;
+		PrintService printService[];
+		PrintService service;
+		
+		PDDocument pdd;
+		
+		try {
+			fis = new FileInputStream(file);
+			pdd = PDDocument.load(fis);
+
+			PrintRequestAttributeSet pras = new HashPrintRequestAttributeSet();
+			DocFlavor flavor = DocFlavor.INPUT_STREAM.AUTOSENSE;
+
+			printService = PrintServiceLookup
+					.lookupPrintServices(flavor, pras);
+			defaultService = PrintServiceLookup
+					.lookupDefaultPrintService();
+			service = ServiceUI.printDialog(null, 200, 200,
+					printService, defaultService, flavor, pras);
+			if (service != null) {
+
+				job = PrinterJob.getPrinterJob();
+				job.setPageable(new PDFPageable(pdd)); // BP Changed from PDFPageable
+				job.setPrintService(service);
+
+				//pdd.silentPrint(job);
+				job.print();
+
+			}
+
+			pdd.close();
+			
+		} catch (FileNotFoundException e1) {
+			// TODO Auto-generated catch block
+			e1.printStackTrace();
+		} catch (IOException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		} catch (PrinterException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
+
+		// PrintRequestAttributeSet pras = new HashPrintRequestAttributeSet();
+		// DocFlavor flavor = DocFlavor.INPUT_STREAM.AUTOSENSE;
+		//		
+		// PrintService printService[] = PrintServiceLookup.lookupPrintServices(
+		// flavor, pras);
+		// PrintService defaultService = PrintServiceLookup
+		// .lookupDefaultPrintService();
+		// PrintService service = ServiceUI.printDialog(null, 200, 200,
+		// printService, defaultService, flavor, pras);
+		// if (service != null) {
+		// try {
+		// DocAttributeSet das = new HashDocAttributeSet();
+		// Doc doc1 = new SimpleDoc(fis, flavor, das);
+		// DocPrintJob job1 = service.createPrintJob();
+		//		
+		// try {
+		// pras.add(MediaSizeName.ISO_A4);
+		// job1.print(doc1, pras);
+		// } catch (PrintException e) {
+		// e.printStackTrace();
+		// }
+		// }
+
+	}
+	// BP - PBI 153894
+	// created a new print routine since the printFile and printTextFile were
+	// tied to the Basemapping print for some map configurations
+	// and to replace printPdf
+	public static void printDocument(File file) {
+		FileInputStream fis;
+
+		PrintRequestAttributeSet pras = new HashPrintRequestAttributeSet();
+		DocPrintJob job;
+	
+		try {
+			fis = new FileInputStream(file);
+
+			DocFlavor flavor = DocFlavor.INPUT_STREAM.AUTOSENSE;
+			Doc mydoc = new SimpleDoc(fis, flavor, null);
+			PrintService service;
+			PrintService[] services = PrintServiceLookup.lookupPrintServices(flavor, pras);
+		    PrintService defaultService = PrintServiceLookup.lookupDefaultPrintService();
+			
+			   if(services.length == 0) {
+			       if(defaultService == null) {
+			             //no printer found
+
+			       } else {
+			            //print using default
+			    	    pras.add(MediaSizeName.ISO_A4);
+						pras.add(new Copies(1));
+						pras.add(OrientationRequested.PORTRAIT);
+			            job = defaultService.createPrintJob();
+			            job.print(mydoc, pras);
+			       }
+
+			    } else {
+
+			       //built in UI for printing you may not use this
+			       service = ServiceUI.printDialog(null, 200, 200, services, defaultService, flavor, pras);
+
+			        if (service != null)
+			        {
+			           job = service.createPrintJob();
+			           pras.add(MediaSizeName.ISO_A4);
+			           pras.add(new Copies(1));
+			           pras.add(OrientationRequested.PORTRAIT);
+			           job.print(mydoc, pras);
+			        }
+			    }
+		} 
+		catch (PrintException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
+		catch (FileNotFoundException e) {
+			e.printStackTrace();
+		}
+
+		}
+	
+
+	/**
+	 * This method uses JAVA PrintServiceLookup to print a file to the local
+	 * default printer in landscape format.
+	 * 
+	 * @param file
+	 *            to be printed
+	 */
+	public static void printFile(File file) {
+
+		PrintRequestAttributeSet pras = new HashPrintRequestAttributeSet();
+		DocFlavor flavor = DocFlavor.INPUT_STREAM.AUTOSENSE;
+
+		PrintService printService[] = PrintServiceLookup.lookupPrintServices(
+				flavor, pras);
+		PrintService defaultService = PrintServiceLookup
+				.lookupDefaultPrintService();
+		PrintService service = ServiceUI.printDialog(null, 200, 200,
+				printService, defaultService, flavor, pras);
+		if (service != null) {
+			try {
+				FileInputStream fis = new FileInputStream(file);
+				DocAttributeSet das = new HashDocAttributeSet();
+				Doc doc1 = new SimpleDoc(fis, flavor, das);
+				DocPrintJob job1 = service.createPrintJob();
+
+				try {
+					pras.add(MediaSizeName.ISO_A4);
+					pras.add(new Copies(1));
+					pras.add(OrientationRequested.LANDSCAPE);
+					job1.print(doc1, pras);
+					String msg = TimsConstants.PRINTING_TO_DEFAULT_PRINTER;
+					TimsGlobals.BMDialog.showInform(msg);
+				} catch (PrintException e) {
+					e.printStackTrace();
+				}
+			} catch (FileNotFoundException e) {
+				e.printStackTrace();
+			}
+		}
+
+	}
+
+	/**
+	 * This method uses JAVA PrintServiceLookup to print a text file to the
+	 * local default printer in landscape format.
+	 * 
+	 * @param name
+	 *            of textFile to be printed
+	 */
+	public static void printTextFile(String textFile)
+			throws FileNotFoundException, PrintException {
+		DocFlavor format = INPUT_STREAM.AUTOSENSE; // new
+		// DocFlavor("text/plain",
+		// "java.io.InputStream");
+		PrintRequestAttributeSet aset = new HashPrintRequestAttributeSet();
+		aset.add(MediaSizeName.ISO_A4);
+		aset.add(new Copies(1));
+		aset.add(OrientationRequested.LANDSCAPE);
+		PrintService pservices = PrintServiceLookup.lookupDefaultPrintService();
+		DocPrintJob djob = pservices.createPrintJob();
+		FileInputStream input;
+
+		input = new FileInputStream(textFile);
+		Doc doc = new SimpleDoc(input, format, null);
+		djob.print(doc, aset);
+	}
+
+	/**
+	 * Generic copy from source file to destination file
+	 * 
+	 * @param sourceFile
+	 * @param destFile
+	 * @throws IOException
+	 */
+	public static void copyFile(File sourceFile, File destFile)
+			throws IOException {
+		if (!destFile.exists()) {
+			destFile.createNewFile();
+		}
+		FileChannel source = null;
+		FileChannel destination = null;
+		try {
+			source = new FileInputStream(sourceFile).getChannel();
+			destination = new FileOutputStream(destFile).getChannel();
+			destination.transferFrom(source, 0, source.size());
+		} finally {
+			if (source != null) {
+				source.close();
+			}
+			if (destination != null) {
+				destination.close();
+			}
+		}
+	}
+
+	/**
+	 * ArcMap application handle used by underlying operating system.
+	 * 
+	 * @return an integer number larger than zero, if valid. Otherwise, returns
+	 *         user's response (1 or 0).
+	 */
+	public static int getHwnd(IApplication app) {
+
+		try {
+			return app.getHWnd();
+		} catch (AutomationException e) {
+			String msg = file_name + e.getMessage();
+			int res = TimsGlobals.BMDialog.showExit(msg);
+			return res;
+		} catch (IOException e) {
+			String msg = file_name + e.getMessage();
+			int res = TimsGlobals.BMDialog.showExit(msg);
+			return res;
+		}
+	}
+
+	/*
+	 * The default value of Panes is 7; this means that the main (0), animation
+	 * (1), position (2), and page position (4) panes are visible (0 + 1 + 2 + 4
+	 * = 7). You can set the Panes property to 255 to show all panes
+	 * app.getStatusBar().showProgressAnimation("Updating comments ...", null);
+	 * app.getStatusBar().playProgressAnimation(true);
+	 * app.getStatusBar().playProgressAnimation(false);
+	 * app.getStatusBar().hideProgressAnimation();
+	 */
+	/**
+	 * Launch a Progress Dialog to display how long it is taking to complete
+	 * some event.
+	 * 
+	 * @param app
+	 *            - IApplication interface
+	 * @param min
+	 *            - the starting point for the progress display
+	 * @param max
+	 *            - ending point for a progress display
+	 * @param msg
+	 *            - message you want user to see
+	 * @throws IOException
+	 * @throws UnknownHostException
+	 */
+
+	public static void ShowProgressDialog(IApplication app, int min, int max,
+			String msg, String title, int anim) throws UnknownHostException,
+			IOException {
+
+		// Create a CancelTracker
+		CancelTracker trackCancel = new CancelTracker();
+		IProgressDialogFactory progressDialogFactory = new ProgressDialogFactory();
+
+		// Set the properties of the Step Progressor
+		int hwnd = app.getHWnd();
+		IStepProgressor stepProgressor = progressDialogFactory.create(
+				trackCancel, hwnd);
+		stepProgressor.setMinRange(min);
+		stepProgressor.setMaxRange(max);
+		int step = 1;
+		stepProgressor.setStepValue(step);
+		stepProgressor.setMessage(msg);
+
+		// Create the ProgressDialog. This automatically displays the dialog
+		ProgressDialog progressDialog = new ProgressDialog(stepProgressor);
+		IProgressDialog2 progressDialog2 = progressDialog;
+
+		// Set the properties of the ProgressDialog
+		progressDialog2.setCancelEnabled(true);
+		// progressDialog2.setDescription("what this work is about");
+		progressDialog2.setTitle(title);
+		progressDialog2
+				.setAnimation(esriProgressAnimationTypes.esriProgressGlobe);
+
+		// Step. Do your process here.
+		boolean BM_continue = true;
+		for (int i = min; i <= max; i += step) {
+
+			IStatusBar statusBar = app.getStatusBar();
+			statusBar.setMessage(0, Integer.toString(i));
+
+			// TODO:
+			// 'Ideally you would call another sub/function/method from here to
+			// do the
+			// 'work. For example read all files of a specified types on disk,
+			// loop
+			// 'through a recordset, etc.
+			// '...
+
+			// Check if the cancel button was pressed. If so, stop process
+			BM_continue = trackCancel.esri_continue();
+			if (!BM_continue)
+				break;
+		}
+
+		// Done
+		trackCancel = null;
+		stepProgressor = null;
+		progressDialog2.hideDialog();
+		progressDialog2 = null;
+
+	}
+
+	/**
+	 * 
+	 * <p>
+	 * Checks whether the user has selected a region and successfully logged in.
+	 * Returns true if the user has selected a region and false if not. If
+	 * false, checkRegion() also displays an error dialog indicating that a
+	 * region must be selected.
+	 * </p>
+	 * 
+	 * 
+	 * @return
+	 */
+	public static boolean checkRegion() {
+
+		boolean isRegionSelected = true;
+
+		/* JPanel mainPanel; */
+
+		// Beheen 8/17/12 - last active region never is null!
+		// Use active region and not last active region, they are
+		// not in sync for good reason.
+		if (SDEManager.getSDEManager(TimsGlobals.app).getActiveRegion() == null) {
+
+			/*
+			 * ErrorInfo info;
+			 * 
+			 * info = new ErrorInfo("Select a region.",
+			 * "You must first select a region before using this tool.", null,
+			 * "category", null, Level.OFF, null);
+			 * 
+			 * mainPanel = MaintoolbarDockableWindow.getMainPanel();
+			 * 
+			 * JXErrorPane.showDialog(mainPanel, info);
+			 */
+
+			isRegionSelected = false;
+		}
+
+		return isRegionSelected;
+
+	}
+
+	/**
+	 * 
+	 * <p>
+	 * Returns the TIMS Basemapping application main dockable window.
+	 * </p>
+	 * 
+	 * @param app
+	 * @return
+	 */
+	public static IDockableWindow getMainDockableWindow(IApplication app) {
+		IDockableWindow win = null;
+		IDockableWindowManager dwm;
+		IUID uid;
+
+		try {
+			dwm = new IDockableWindowManagerProxy(app);
+			uid = new UID();
+			uid
+					.setValue("gov.doi.gis.timsmapping.framework.ui.dockablewindows.maintoolbardockablewindow");
+			win = dwm.getDockableWindow(uid);
+		} catch (IOException e) {
+
+			e.printStackTrace();
+		}
+
+		return win;
+
+	}
+
+	/**
+	 * Convert the display extents in Pixels (at the current map scale) and then
+	 * return out the map units.
+	 * 
+	 * @param activeView
+	 *            - An IActiveView interface
+	 * @param pixelUnits
+	 *            - A double containing the number of display pixels to convert.
+	 *            Example: 100
+	 * @return a double containing the number of Map Units, -1 is returned if
+	 *         something went wrong
+	 */
+	public static double convertPixelsToMapUnits(IActiveView activeView,
+			double pixelUnits) {
+
+		if (activeView == null)
+			return -1;
+
+		// Get the ScreenDisplay
+		IScreenDisplay screenDisplay;
+		try {
+			screenDisplay = activeView.getScreenDisplay();
+			// Get the DisplayTransformation
+			IDisplayTransformation displayTransformation = screenDisplay
+					.getDisplayTransformation();
+
+			// Get the device frame which will give us the number of pixels in
+			// the X direction
+			tagRECT deviceRECT = displayTransformation.getDeviceFrame();
+			double pixelExtent = (deviceRECT.right - deviceRECT.left);
+			if (TimsConstants.DEBUG)
+				System.out.println(file_name + pixelExtent);
+
+			// Get the map extent of the currently visible area
+			IEnvelopeGEN envelope = (IEnvelopeGEN) displayTransformation
+					.getVisibleBounds();
+			double realWorldDisplayExtent = envelope.getWidth();
+
+			if (TimsConstants.DEBUG)
+				System.out.println(file_name + envelope.getWidth()
+						+ ", .........." + envelope.getHeight());
+
+			// Calculate the size of one pixel
+			if (pixelExtent == 0)
+				return -1;
+
+			double sizeOfOnePixel = (realWorldDisplayExtent / pixelExtent);
+
+			if (TimsConstants.DEBUG)
+				System.out.println(file_name + pixelExtent + ", .........."
+						+ pixelUnits * sizeOfOnePixel);
+
+			// Multiply this by the input argument to get the result
+			return (pixelUnits * sizeOfOnePixel);
+
+		} catch (AutomationException e) {
+
+			e.printStackTrace();
+		} catch (IOException e) {
+
+			e.printStackTrace();
+		}
+		return -1;
+
+	}
+
+	/**
+	 * This method gets the size of the arcmap application main screen device in
+	 * pixel.
+	 */
+	public static tagRECT getDisplay(IApplication app) {
+
+		try {
+			IMxApplication2 pMxApp = (IMxApplication2) app;
+			IAppDisplay pAppDisplay = pMxApp.getDisplay();
+			tagRECT tag = pAppDisplay.getDisplayTransformation()
+					.getDeviceFrame();
+			if (TimsConstants.DEBUG)
+				System.out.println(file_name + tag.left + ", " + tag.right
+						+ ", " + tag.bottom + ", " + tag.top + "\n");
+			return tag;
+
+		} catch (IOException e) {
+
+			e.printStackTrace();
+		}
+		return null;
+
+	}
+
+	/**
+	 * This method returns the size of TOC window in pixel - not working yet!!
+	 * Beheen
+	 * 
+	 * @param app
+	 *            - ArcMap application
+	 * @throws IOException
+	 */
+	public static IDockableWindow getTOC(IApplication app) throws IOException {
+
+		IDockableWindowManager pDocWinMgr = new IDockableWindowManagerProxy(app);
+		;
+		UID uid = new UID();
+		uid.setValue("{368131A0-F15F-11D3-A67E-0008C7DF97B9}"); // UID of
+		// TOCDockableWindow
+		// - this is not
+		// an
+		// application
+		IDockableWindow pTOC = pDocWinMgr.getDockableWindow(uid);
+
+		return pTOC;
+
+	}
+
+	/**
+	 * Returns focus map frame size in page unit
+	 * 
+	 * @return a point representing width and height of the map frame envelope.
+	 */
+	public static IEnvelope getMapFrameSize() {
+		if (TimsConstants.DEBUG)
+			System.out.println(file_name + "getMapFrameSize()");
+		try {
+
+			IMxDocument mxDoc = (IMxDocument) TimsGlobals.app.getDocument();
+			IPageLayout pageLayout = (PageLayout) mxDoc.getPageLayout();
+			IGraphicsContainer pGraphicContainer = (IGraphicsContainer) pageLayout;
+			IFrameElement frame = pGraphicContainer.findFrame(mxDoc
+					.getFocusMap());
+			
+			IMapFrame pMapFrame = (IMapFrame) frame;
+
+			pGraphicContainer.reset();
+			IElement pElement = pGraphicContainer.next();
+
+			while (pElement != null) {
+				if (pElement instanceof IMapFrame) {
+					if (pElement.equals(pMapFrame)) {
+						IEnvelope env = pElement.getGeometry().getEnvelope();
+						if (TimsConstants.DEBUG) {
+							System.out.println(file_name
+									+ "Coord of mapFrame: "
+									+ env.getXMin() + ", "
+									+ env.getYMin() + ", "
+									+ env.getXMax() + ", "
+									+ env.getYMax());
+							System.out.println(file_name + "getMapFrameSize()..........\n");
+						}
+						return env;
+
+					}
+
+				}
+				pElement = pGraphicContainer.next();
+
+			} // end of while
+
+			return null;
+
+		} catch (AutomationException e) {
+			
+			e.printStackTrace();
+		} catch (IOException e) {
+			
+			e.printStackTrace();
+		}
+		return null;
+	}
+	
+	
+	public static void printActiveView(IEnvelope ext) {
+		
+		try {
+			
+			double xx = ext.getXMin();
+		    double yy = ext.getYMin();
+		    double XX = ext.getXMax();
+		    double YY = ext.getYMax();
+		    double ww = ext.getWidth();
+		    double hh = ext.getHeight();
+		    System.out.println(file_name + "View bounds are: " + xx + ", " + yy + ", " + XX + ", " + YY + ", " + ww + ", " + hh );
+		    
+		} catch (AutomationException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		} catch (IOException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
+	}
+	
+	
+    
+	/**
+	 * Gets the map scale or the active map scale
+	 * in map view
+	 * @param the map or the active map if null
+	 * @return map scale
+	 */
+	public static double getMapScale(IMap map) {
+		if(TimsConstants.DEBUG)
+			System.out.println(file_name + "getMapScale()");
+		
+		double scale = 0.0;
+		
+		try {
+			IMxDocument mxDoc = (IMxDocument) TimsGlobals.app.getDocument();
+			if(map == null) {
+				map = mxDoc.getFocusMap();
+			}
+			
+			IActiveView mapActiveView = mxDoc.getActiveView();
+			
+			if(mapActiveView instanceof IPageLayout) {
+				mapActiveView = (IActiveView) map;
+				mxDoc.setActiveViewByRef(mapActiveView);
+				
+			}
+			
+			else
+				mapActiveView = (IActiveView)map;
+			
+			scale = map.getMapScale();
+			
+			if(TimsConstants.DEBUG)
+				System.out.println("Map scale is: " + scale);
+			
+			
+			return scale;
+			
+		} catch (AutomationException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		} catch (IOException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
+		
+		if(TimsConstants.DEBUG)
+			System.out.println(file_name + "getMapScale() returning invalid scale!..........\n");
+		
+		return 0.0;
+	}
+	
+	
+	/**
+	 * returns the visible bound of the given map
+	 * or focus map if the map is null.
+	 * @param - the map of interest
+	 * @return extent of the fitted bound
+	 */
+	public static IEnvelope getVisibleBound(IMap map) {
+		
+		if(TimsConstants.DEBUG)
+			System.out.println(file_name + "getVisibleBound()");
+		try {
+			IMxDocument mxDoc = (IMxDocument) TimsGlobals.app.getDocument();
+			if(map == null) {
+				map = mxDoc.getFocusMap();
+			}
+			
+			IActiveView mapActiveView = (IActiveView) map;
+	
+			if(TimsConstants.DEBUG) System.out.println(file_name + mapActiveView);
+			
+			IEnvelope Env = new Envelope();
+			Env = mapActiveView.getExtent();
+			System.out.println(file_name + Env.getWidth() + ", " + Env.getHeight());
+			System.out.println(file_name + "getVisibleBound()..........\n");
+			return Env;
+		} catch (AutomationException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		} catch (IOException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
+		System.out.println(file_name + "getVisibleBound()..........\n");
+		return null;
+	}
+	
+	
+	/**
+	 * returns the fitted bound of the given map
+	 * or focus map if the map is null.
+	 * The FittedBounds is the visible map extent 
+	 * adjusted to fit the device
+	 * @see The DisplayTransformation object defines 
+	 * how real-world coordinates are mapped to an output 
+	 * device. Three rectangles define the transformation. 
+	 * Bounds specifies the full extent in real-world coordinates. 
+	 * VisibleBounds specifies what extent is currently visible. 
+	 * DeviceFrame specifies where VisibleBounds appears on the 
+	 * output device. Since the aspect ratio of DeviceFrame may 
+	 * not always match the aspect ratio of the specified 
+	 * VisibleBounds, the transformation calculates the actual 
+	 * visible bounds that fit DeviceFrame. This is called FittedBounds 
+	 * and is in real-world coordinates. All coordinates can be rotated 
+	 * around the center of the visible bounds by setting the 
+	 * transformation's Rotation property. 
+	 * @param - the map of interest
+	 * @return extent of the fitted bound
+	 */
+	public static IEnvelope getFittedBound(IMap map) {
+		
+		IMxDocument mxDoc;
+		IActiveView mapActiveView = null;
+		
+		try {
+			
+			if(map == null) {
+				mxDoc = (IMxDocument) TimsGlobals.app.getDocument();
+				mapActiveView = (IActiveView) mxDoc.getFocusMap();
+			}
+			else
+				mapActiveView = (IActiveView)map;
+			
+			if(TimsConstants.DEBUG) System.out.println(file_name + mapActiveView);
+			IScreenDisplay pScreenDisplay = mapActiveView.getScreenDisplay();
+			IDisplayTransformation pTransform = pScreenDisplay.getDisplayTransformation();
+			IEnvelope Env = new Envelope();
+			Env = pTransform.getFittedBounds();
+			return Env;
+		} catch (AutomationException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		} catch (IOException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
+
+		return null;
+	}
+	
+	
+	/**
+	 * returns the envelope of the requested map frame
+	 * or the active map, if null
+	 * @return map - the map of interest
+	 * @return extent of the active map frame
+	 */
+	public static tagRECT getTagRect(IMap map) {
+		
+		IMxDocument mxDoc;
+		IActiveView mapActiveView = null;
+		
+		try {
+			
+			if(map == null) {
+				mxDoc = (IMxDocument) TimsGlobals.app.getDocument();
+				mapActiveView = (IActiveView) mxDoc.getFocusMap();
+			}
+			else 
+				mapActiveView = (IActiveView)map;
+			
+			// Beheen - ratio of map's tag is the same ratio as map's fitted bounds
+			tagRECT tag = mapActiveView.getExportFrame();
+			
+			if(TimsConstants.DEBUG)
+				System.out.println(file_name + "Set the output area of the device using the DeviceFrame property:\n " + 
+					tag.left + ", " + tag.right + ", " + tag.top + ", " + tag.bottom + ", " + (tag.bottom - tag.top) + ", " + (tag.right - tag.left));
+			return tag;
+		} catch (AutomationException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+			
+		} catch (IOException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+			
+		}
+		
+		return null;
+	}
+	
+	/**
+	 * Use IDisplayTransformation for converting coordinates 
+	 * between real-world and device space and back.  
+	 * To prepare a transform for use, follow these steps:
+	 * Obtain an IDisplayTransformation reference to the 
+	 * DisplayTransformation object from IDisplay::DisplayTransformation. 
+	 * Because IScreenDisplay inherits from IDisplay, you can also use 
+	 * IScreenDisplay::DisplayTransformation.
+	 * 
+	 * Each DisplayTransformation manages a coordinate system object 
+	 * such as a GeographicCoordinateSystem or ProjectedCoordinateSystem. 
+	 * Obtain a reference to the display's coordinate system object 
+	 * using IDisplayTransformation::SpatialReference.
+	 * The DisplayTransformation of a PageLayout object does not have a 
+	 * spatial reference and translates between device units and page units
+     */
+	public static void printDisplayTransformation() {
+
+		IMxApplication2 pMxApp = (IMxApplication2) TimsGlobals.app;
+		IAppDisplay pAppDisplay = null;
+		tagRECT tag = null;
+		IEnvelope Env = null;
+		double res = 0.0;
+		System.out.println(file_name + "printDisplayTransformation");
+				
+		try {
+			pAppDisplay = pMxApp.getDisplay();
+			IScreenDisplay pScreenDisplay = pAppDisplay.getMainScreen();
+			IDisplayTransformation pTransform = pScreenDisplay.getDisplayTransformation();
+			Env = new Envelope();
+			Env = pTransform.getBounds();
+			double x = Env.getXMin();
+			double y = Env.getYMin();
+			double X = Env.getXMax();
+			double Y = Env.getYMax();
+			double w = Env.getWidth();
+			double h = Env.getHeight();
+			
+			System.out.println(file_name + "Set the full map extent with the Bounds property in world coordinate:\n " + 
+					x + ", " + y + ", " + X + ", " + Y + ", " + w + ", " + h);
+			
+			Env = pTransform.getVisibleBounds();
+			x = Env.getXMin();
+			y = Env.getYMin();
+			X = Env.getXMax();
+			Y = Env.getYMax();
+			w = Env.getWidth();
+			h = Env.getHeight();
+			System.out.println(file_name + "Set the visible map extent (zoom rectangle) with the VisibleBounds property:\n " + 
+					x + ", " + y + ", " + X + ", " + Y + ", " + w + ", " + h);
+			
+			
+			tag = pTransform.getDeviceFrame();
+			System.out.println(file_name + "Set the output area of the device using the DeviceFrame property:\n " + 
+					tag.left + ", " + tag.right + ", " + tag.top + ", " + tag.bottom + ", " + (tag.top - tag.bottom) + ", " + (tag.right - tag.left));
+			
+			double yratio = h / (tag.top - tag.bottom) ;
+			double xratio = w / (tag.right - tag.left);
+			double tratio = xratio / yratio;
+			System.out.println(file_name + "The transform is based on the ratio between the VisibleBounds and the DeviceFrame: \n" +
+			                   tratio);
+			
+			
+			res = pTransform.getResolution();
+			System.out.println(file_name + "Set the resolution of the output device using the Resolution property:\n " + res);
+			
+			ISpatialReference sref = pTransform.getSpatialReference();
+			double[] xD = new double[1];
+			double[] XD = new double[1];
+			double[] yD = new double[1];
+			double[] YD = new double[1];			
+			sref.getDomain(xD, XD, yD, YD);
+			System.out.println(file_name + "Each DisplayTransformation manages a coordinate system object:\n " + 
+					xD[0] + ", " + yD[0] + ", " + XD[0] + ", " + YD[0] + ", " + sref.getName());
+			
+			Env = pTransform.getFittedBounds();
+			x = Env.getXMin();
+			y = Env.getYMin();
+			X = Env.getXMax();
+			Y = Env.getYMax();
+			w = Env.getWidth();
+			h = Env.getHeight();
+			System.out.println(file_name + "The transform object calculates the FittedBounds automatically and this is the visible map " +
+				      "                         extent adjusted to fit the device:\n " + 
+						x + ", " + y + ", " + X + ", " + Y + ", " + w + ", " + h);
+				
+			
+			double ratio = pTransform.getScaleRatio();
+			System.out.println(file_name + "display scale ratio:\n " + ratio);
+			
+			double unit = pTransform.getUnits();
+			System.out.println(file_name + "display unit:\n " + unit);
+			
+			System.out.println(file_name + "Normally the DeviceFrame is simply the full extent of the device with the origin equal to 0,0.\n");
+		} catch (AutomationException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		} catch (IOException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
+		
+		System.out.println(file_name + "printDisplayTransformation..........\n");
+	}
+
+
+	public static void printMapTransformation(IMap map) {
+		
+		tagRECT tag = null;
+		IEnvelope Env = null;
+		double res = 0.0;
+		System.out.println(file_name + "printMapTransformation");
+		if(map == null) {
+			System.out.println(file_name + "printMapTransformation - null map.........\n");
+			return;
+		}
+		
+		try {
+			IActiveView mapActiveView = (IActiveView) map;
+			IScreenDisplay pScreenDisplay = mapActiveView.getScreenDisplay();
+			IDisplayTransformation pTransform = pScreenDisplay.getDisplayTransformation();
+			Env = new Envelope();
+			Env = pTransform.getBounds();
+			double x = Env.getXMin();
+			double y = Env.getYMin();
+			double X = Env.getXMax();
+			double Y = Env.getYMax();
+			double w = Env.getWidth();
+			double h = Env.getHeight();
+			
+			System.out.println(file_name + "Set the full map extent with the Bounds property in world coordinate:\n " + 
+					x + ", " + y + ", " + X + ", " + Y + ", " + w + ", " + h);
+			
+			Env = pTransform.getVisibleBounds();
+			x = Env.getXMin();
+			y = Env.getYMin();
+			X = Env.getXMax();
+			Y = Env.getYMax();
+			w = Env.getWidth();
+			h = Env.getHeight();
+			System.out.println(file_name + "Set the visible map extent (zoom rectangle) with the VisibleBounds property:\n " + 
+					x + ", " + y + ", " + X + ", " + Y + ", " + w + ", " + h);
+			
+			tag = pTransform.getDeviceFrame();
+			System.out.println(file_name + "Set the output area of the device using the DeviceFrame property:\n " + 
+					tag.left + ", " + tag.right + ", " + tag.top + ", " + tag.bottom + ", " + (tag.top - tag.bottom) + ", " + (tag.right - tag.left));
+			
+			double yratio = h / (tag.top - tag.bottom) ;
+			double xratio = w / (tag.right - tag.left);
+			double tratio = xratio / yratio;
+			System.out.println(file_name + "The transform is based on the ratio between the VisibleBounds and the DeviceFrame: \n" +
+								tratio);
+			
+			
+			res = pTransform.getResolution();
+			System.out.println(file_name + "Set the resolution of the output device using the Resolution property:\n " + res);
+			
+			ISpatialReference sref = pTransform.getSpatialReference();
+			double[] xD = new double[1];
+			double[] XD = new double[1];
+			double[] yD = new double[1];
+			double[] YD = new double[1];			
+			sref.getDomain(xD, XD, yD, YD);
+			System.out.println(file_name + "Each DisplayTransformation manages a coordinate system object:\n " + 
+					xD[0] + ", " + yD[0] + ", " + XD[0] + ", " + YD[0] + ", " + sref.getName());
+			
+			Env = pTransform.getFittedBounds();
+			x = Env.getXMin();
+			y = Env.getYMin();
+			X = Env.getXMax();
+			Y = Env.getYMax();
+			w = Env.getWidth();
+			h = Env.getHeight();
+			System.out.println(file_name + "The transform object calculates the FittedBounds automatically and this is the visible map " +
+			      "                         extent adjusted to fit the device:\n " + 
+					x + ", " + y + ", " + X + ", " + Y + ", " + w + ", " + h);
+			
+			double ratio = pTransform.getScaleRatio();
+			System.out.println(file_name + "display scale ratio:\n " + ratio);
+			
+			double unit = pTransform.getUnits();
+			System.out.println(file_name + "display unit:\n " + unit);
+
+			System.out.println(file_name + "Normally the DeviceFrame is simply the full extent of the device with the origin equal to 0,0.\n");
+		} catch (AutomationException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		} catch (IOException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
+		System.out.println(file_name + "printMapTransformation..........\n");
+	}
+	
+	
+	public static void printPageTransformation() {
+		
+		tagRECT tag = null;
+		IEnvelope Env = null;
+		double res = 0.0;
+		System.out.println(file_name + "printPageTransformation");
+		
+		
+		try {
+			IMxDocument mxDoc = (IMxDocument) TimsGlobals.app.getDocument();
+			IPageLayout mLayout = mxDoc.getPageLayout();
+			if(mLayout == null) {
+				System.out.println(file_name + "printMapTransformation - null layout.........\n");
+				return;
+			}
+			IActiveView pageActiveView = (IActiveView)mLayout ;
+			mxDoc.setActiveViewByRef(pageActiveView);
+			IScreenDisplay pScreenDisplay = pageActiveView.getScreenDisplay();
+			IDisplayTransformation pTransform = pScreenDisplay.getDisplayTransformation();
+			Env = new Envelope();
+			Env = pTransform.getBounds();
+			double x = Env.getXMin();
+			double y = Env.getYMin();
+			double X = Env.getXMax();
+			double Y = Env.getYMax();
+			double w = Env.getWidth();
+			double h = Env.getHeight();
+			
+			System.out.println(file_name + "Set the full map extent with the Bounds property in world coordinate:\n " + 
+					x + ", " + y + ", " + X + ", " + Y + ", " + w + ", " + h);
+			
+			Env = pTransform.getVisibleBounds();
+			x = Env.getXMin();
+			y = Env.getYMin();
+			X = Env.getXMax();
+			Y = Env.getYMax();
+			w = Env.getWidth();
+			h = Env.getHeight();
+			System.out.println(file_name + "Set the visible map extent (zoom rectangle) with the VisibleBounds property:\n " + 
+					x + ", " + y + ", " + X + ", " + Y + ", " + w + ", " + h);
+			
+			tag = pTransform.getDeviceFrame();
+			System.out.println(file_name + "Set the output area of the device using the DeviceFrame property:\n" + 
+					tag.left + ", " + tag.right + ", " + tag.top + ", " + tag.bottom + ", " + (tag.top - tag.bottom) + ", " + (tag.right - tag.left));
+			
+			double yratio = h / (tag.top - tag.bottom) ;
+			double xratio = w / (tag.right - tag.left);
+			double tratio = xratio / yratio;
+			System.out.println(file_name + "The transform is based on the ratio between the VisibleBounds and the DeviceFrame:\n" +
+								tratio);
+				
+				
+			res = pTransform.getResolution();
+			System.out.println(file_name + "Set the resolution of the output device using the Resolution property:\n " + res);
+			
+			ISpatialReference sref = pTransform.getSpatialReference();
+			double[] xD = new double[1];
+			double[] XD = new double[1];
+			double[] yD = new double[1];
+			double[] YD = new double[1];			
+			sref.getDomain(xD, XD, yD, YD);
+			System.out.println(file_name + "Each DisplayTransformation manages a coordinate system object:\n " + 
+					xD[0] + ", " + yD[0] + ", " + XD[0] + ", " + YD[0] + ", " + sref.getName());
+			
+			Env = pTransform.getFittedBounds();
+			x = Env.getXMin();
+			y = Env.getYMin();
+			X = Env.getXMax();
+			Y = Env.getYMax();
+			w = Env.getWidth();
+			h = Env.getHeight();
+			System.out.println(file_name + "The transform object calculates the FittedBounds automatically and this is the visible map " +
+			      "                         extent adjusted to fit the device:\n " + 
+					x + ", " + y + ", " + X + ", " + Y + ", " + w + ", " + h);
+			
+			double ratio = pTransform.getScaleRatio();
+			System.out.println(file_name + "display scale ratio:\n " + ratio);
+			
+			double unit = pTransform.getUnits();
+			System.out.println(file_name + "display unit:\n " + unit);
+			
+			System.out.println(file_name + "Normally the DeviceFrame is simply the full extent of the device with the origin equal to 0,0.\n");
+		} catch (AutomationException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		} catch (IOException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
+		System.out.println(file_name + "printPageTransformation..........\n");
+	}
+	
+	
+	/**
+	 * Gets the current fitted bounds of the map document display.
+	 * 
+	 * @return m_pDocwinbounds as an envelope.
+	 * 
+	 *         1) the size of the map display and its location with respect to
+	 *         the screen 
+	 *         2) table of contents in pixels 
+	 *         3) the deviceframe in pixels from the displaytransformation/screendisplay/activeview 
+	 *         4) the fittedbounds in co-ordinates from the
+	 *         displaytransformation/screendisplay/activeview which I have
+	 *         translated to pixels using the FromMapPoint method of
+	 *         displaytransformation 
+	 *         5) the dimensions of the window in pixels using IWindowPosition
+	 */
+	public static IEnvelope getDisplayFittedBound(IApplication app) {
+		IMxApplication2 pMxApp = (IMxApplication2) app;
+
+		try {
+			IAppDisplay pAppDisplay = pMxApp.getDisplay();
+			// this display is same as pActiveView.getScreenDisplay();
+			IScreenDisplay pScreenDisplay = pAppDisplay.getMainScreen();
+			IDisplayTransformation pTransform = pScreenDisplay
+					.getDisplayTransformation();
+			IEnvelope m_pDocDspBounds = new Envelope();
+			m_pDocDspBounds = (IEnvelope) pTransform.getFittedBounds()
+					.getEnvelope();
+
+			if (TimsConstants.DEBUG)
+				System.out.println(file_name + app + "\n" + "\t\t" + pMxApp
+						+ "\n" + "\t\t" + pAppDisplay + "\n" + "\t\t"
+						+ pTransform + "\n" + "\t\t" + pScreenDisplay + "\n");
+			if (TimsConstants.DEBUG)
+				System.out.println(file_name + m_pDocDspBounds.getWidth()
+						+ ",....................... "
+						+ m_pDocDspBounds.getHeight());
+			return m_pDocDspBounds;
+
+		} catch (AutomationException e) {
+
+			e.printStackTrace();
+		} catch (IOException e) {
+
+			e.printStackTrace();
+		}
+		return null;
+	}
+
+	/**
+	 * 
+	 * <p>
+	 * Capitalizes a string, e.g. if str = "ATLANTIC" or "atlantic",
+	 * capitalize(str) will return "Atlantic."
+	 * </p>
+	 * 
+	 * @param str
+	 * @return
+	 */
+	public static String capitalize(String str) {
+		StringBuilder capitalizedString;
+
+		if (str == null) {
+			return "";
+		}
+
+		capitalizedString = new StringBuilder(str.toLowerCase());
+
+		capitalizedString.setCharAt(0, str.substring(0, 1).toUpperCase()
+				.toCharArray()[0]);
+
+		return capitalizedString.toString();
+
+	}
+
+	/**
+	 * This method returns equivalent of a esriUnit data type used in a map to
+	 * that of esriSRUnitType that is used in a Spatial Reference of the same
+	 * map.
+	 * 
+	 * @param inUnit
+	 *            - esriUnit of the map as returned from method getMapUnits()
+	 * @return an array of double of unit and factor.
+	 */
+	public static int[] getESRISRUnitTypeEquivalent(int inUnit) {
+
+		int bmMapUnits = 0;
+		int bmFactor = 1;
+		int tempCollection[];
+		tempCollection = new int[2];
+
+		switch (inUnit) {
+		case com.esri.arcgis.system.esriUnits.esriInches: // 1
+			bmFactor = 12;
+			bmMapUnits = com.esri.arcgis.geometry.esriSRUnitType.esriSRUnit_Foot;
+			if (TimsConstants.DEBUG)
+				System.out.println(file_name + "esriInches: " + inUnit
+						+ ", esriSRUnit_Foot: " + bmMapUnits);
+			break;
+		case com.esri.arcgis.system.esriUnits.esriFeet: // 3
+			bmMapUnits = com.esri.arcgis.geometry.esriSRUnitType.esriSRUnit_Foot;  // 9002
+			// 9003 = esriSRUnit_SurveyFoot
+			if (TimsConstants.DEBUG)
+				System.out.println(file_name + "esriFeet: " + inUnit
+						+ ", esriSRUnit_Foot: " + bmMapUnits);
+			break;
+		case com.esri.arcgis.system.esriUnits.esriYards: // 4
+			bmMapUnits = com.esri.arcgis.geometry.esriSRUnitType.esriSRUnit_ClarkeYard;
+			if (TimsConstants.DEBUG)
+				System.out.println(file_name + "esriYards: " + inUnit
+						+ ", esriSRUnit_ClarkeYard: " + bmMapUnits);
+			break;
+		case com.esri.arcgis.system.esriUnits.esriMiles: // 5
+			bmMapUnits = com.esri.arcgis.geometry.esriSRUnitType.esriSRUnit_SurveyMile;
+			if (TimsConstants.DEBUG)
+				System.out.println(file_name + "esriMiles: " + inUnit
+						+ ", esriSRUnit_SurveyMile: " + bmMapUnits);
+			break;
+		case com.esri.arcgis.system.esriUnits.esriNauticalMiles: // 6
+			bmMapUnits = com.esri.arcgis.geometry.esriSRUnitType.esriSRUnit_NauticalMile;
+			if (TimsConstants.DEBUG)
+				System.out.println(file_name + "esriNauticalMiles: " + inUnit
+						+ ", esriSRUnit_NauticalMile: " + bmMapUnits);
+			break;
+		case com.esri.arcgis.system.esriUnits.esriMillimeters: // 7
+			bmMapUnits = com.esri.arcgis.geometry.esriSRUnitType.esriSRUnit_Mil6400;
+			if (TimsConstants.DEBUG)
+				System.out.println(file_name + "esriMillimeters: " + inUnit
+						+ ", esriSRUnit_Mil6400: " + bmMapUnits);
+			break;
+		case com.esri.arcgis.system.esriUnits.esriCentimeters: // 8
+			bmFactor = 100;
+			bmMapUnits = com.esri.arcgis.geometry.esriSRUnitType.esriSRUnit_Meter;  // 9001
+			if (TimsConstants.DEBUG)
+				System.out.println(file_name + "esriCentimeters: " + inUnit
+						+ ", esriSRUnit_Meter: " + bmMapUnits);
+			break;
+		case com.esri.arcgis.system.esriUnits.esriMeters: // 9
+			bmMapUnits = com.esri.arcgis.geometry.esriSRUnitType.esriSRUnit_Meter;
+			if (TimsConstants.DEBUG)
+				System.out.println(file_name + "esriMeters: " + inUnit
+						+ ", esriSRUnit_Meter: " + bmMapUnits);
+			break;
+		case com.esri.arcgis.system.esriUnits.esriKilometers: // 10
+			bmMapUnits = com.esri.arcgis.geometry.esriSRUnitType.esriSRUnit_Kilometer;
+			if (TimsConstants.DEBUG)
+				System.out.println(file_name + "esriKilometers: " + inUnit
+						+ ", esriSRUnit_Kilometer: " + bmMapUnits);
+			break;
+		case com.esri.arcgis.system.esriUnits.esriDecimalDegrees: // 11
+			bmMapUnits = com.esri.arcgis.geometry.esriSRUnitType.esriSRUnit_Degree; // 9102
+			if (TimsConstants.DEBUG)
+				System.out.println(file_name + "esriDecimalDegrees: " + inUnit
+						+ ", esriSRUnit_Degree: " + bmMapUnits);
+			break;
+		case com.esri.arcgis.system.esriUnits.esriDecimeters: // 12
+			bmFactor = 10;
+			bmMapUnits = com.esri.arcgis.geometry.esriSRUnitType.esriSRUnit_Meter;
+			if (TimsConstants.DEBUG)
+				System.out.println(file_name + "esriDecimeters: " + inUnit
+						+ ", esriSRUnit_Meter: " + bmMapUnits);
+			break;
+		default:
+			String msg = file_name + "getESRISRUnitTypeEquivalent() - "
+					+ TimsConstants.UNIT_CONVERSION_ERROR;
+			TimsGlobals.BMLogger.log(Level.WARNING, msg);
+			if (TimsConstants.DEBUG)
+				System.out.println(file_name + msg);
+			break;
+		}
+
+		tempCollection[0] = bmMapUnits;
+		tempCollection[1] = bmFactor;
+
+		return tempCollection;
+	}
+
+	/**
+	 * Given the layer name exist in file system, creates a feature layer
+	 * object.
+	 * 
+	 * @param layerName
+	 *            on the disk
+	 * @return feature layer object
+	 * @throws AutomationException
+	 * @throws IOException
+	 */
+	public static ILayer getLayerFile(IApplication app, String layerName)
+			throws AutomationException, IOException {
+
+		// build the path to the layer files for this layer
+		String path = System.getProperty(TimsConstants.dataDirKey);
+		String lyrfile = path + TimsConstants.layersDirNameKey + layerName
+				+ ".lyr"; // layer file in disk
+
+		boolean exists = (new File(lyrfile)).exists();
+		if (exists) {
+			IDataLayer2 pDLayer = null;
+			IGxFile pGxFile = new GxLayer();
+			pGxFile.setPath(lyrfile);
+			GxLayer pGxLayer = (GxLayer) pGxFile;
+
+			// Needs propertySet to switch the database properties
+			// if the layer's connection properties is different
+			// from the expected connection as defined in the config
+			// file
+			SDEManager sdeMgrRef = SDEManager.getSDEManager(app);
+			IPropertySet prop = sdeMgrRef.getPropertySetByKey(sdeMgrRef
+					.getActiveRegion());
+
+			/*
+			 * Disables the ESRI login here through hook/unhook methods. Calling
+			 * the getLayer invokes the ESRI login if the connection properties
+			 * does not contain user name or password.
+			 */
+			int appHWnd = MiscUtil.getHwnd(app);
+			BmUser32Callback u32 = new BmUser32Callback(appHWnd);
+			u32.hook();
+			ILayer layer = pGxLayer.getLayer();
+			u32.unhook();
+
+			pDLayer = (IDataLayer2) layer;
+			// get the data source name of the specified layer
+			IDatasetName2 pDataSetName = (IDatasetName2) pDLayer
+					.getDataSourceName();
+
+			IWorkspaceName2 pOldWSName;
+			pOldWSName = (IWorkspaceName2) pDataSetName.getWorkspaceName();
+			IWorkspaceName2 pNewWSName;
+			pNewWSName = pOldWSName;
+			pNewWSName.setBrowseName(pOldWSName.getBrowseName()); // this line
+			// is a must
+			pNewWSName.setConnectionProperties(prop); // replace the connection
+			// properties
+			pNewWSName.setWorkspaceFactoryProgID(pOldWSName
+					.getWorkspaceFactoryProgID());
+			pDataSetName.setWorkspaceNameByRef(pNewWSName);
+			FeatureLayer fLayer = new FeatureLayer();
+			fLayer = (FeatureLayer) layer;
+			// see if data set exists in the new workspace add it
+			fLayer.setDataSourceName((IName) pDataSetName);
+
+			return fLayer;
+		} else
+			return null;
+	}
+
+	/**
+	 * returns the Base Mapping user's working directory name from the
+	 * environment setting. System.getenv(TimsConstants.workDirKey);
+	 * 
+	 * @return the name of user directory
+	 * @see UNC stands for "Uniform Naming Convention". It's a standard way to
+	 *      access network shares in NT and other Microsoft products... The
+	 *      format of a UNC pathname is \\<HOSTNAME>\<SHARE-NAME>\ <HOSTNAME> is
+	 *      the network name. <SHARE-NAME> is what the drive or directory you
+	 *      are accessing is shared as, on <HOSTNAME>.
+	 */
+	public static String getWorkingDirectory() {
+		String workDir = System.getProperty(TimsConstants.workDirKey);
+		Path uncPath = new Path(workDir);
+		return uncPath.toOSString();
+	}
+
+	/**
+	 * returns the Base Mapping user's log directory name. If directory does not
+	 * exist, creates one. In case of any error, such as lack of permission,
+	 * user has option to exit the program in order to fix the problem or keep
+	 * going without this directory. It is important to have this directory,
+	 * otherwise user may get unhandled error later on.
+	 * 
+	 * @return the name of user working/log directory
+	 * @see UNC stands for "Uniform Naming Convention". It's a standard way to
+	 *      access network shares in NT and other Microsoft products... The
+	 *      format of a UNC pathname is \\<HOSTNAME>\<SHARE-NAME>\ <HOSTNAME> is
+	 *      the network name. <SHARE-NAME> is what the drive or directory you
+	 *      are accessing is shared as, on <HOSTNAME>.
+	 */
+	public static String getUserLogDirectory() {
+		String logDir = System.getProperty(TimsConstants.logDirKey);
+		File f = new File(logDir);
+		if (f.isDirectory()) {
+			// File or directory exists
+		} else {
+			// File or directory does not exist
+			boolean created = new File(logDir).mkdir();
+			if (!created) {
+				String msg = TimsConstants.WORKDIR_ERROR + logDir;
+				int resp = TimsGlobals.BMDialog.showOption(msg);
+				if (resp == 0)
+					System.exit(-1);
+			}
+		}
+
+		Path uncPath = new Path(logDir);
+		return uncPath.toOSString();
+	}
+
+	/**
+	 * This method returns the system user name reading from windows environment
+	 * variable. 
+	 * 
+	 * @return user_name
+	 */
+	public static String getSystemUserName() {
+		String user_name = System.getenv("USERNAME");
+		if (user_name == null) {
+			return "UnKnownUser";
+		}
+		return user_name;
+	}
+
+
+	
+
+	/**
+	 * Gets feature layers from focus map
+	 * 
+	 * @param app
+	 *            - arcobject application
+	 * @return IEnumLayer - a list of layers
+	 * @throws IOException
+	 * @throws AutomationException
+	 */
+
+	public static ILayer getFeatureLayer(IApplication app, String layerName)
+			throws AutomationException, IOException {
+
+		IMxDocument mxDoc = (IMxDocument) app.getDocument();
+		IMap pMap = mxDoc.getFocusMap();
+
+		UID pID = new UID();
+		pID.setValue("{E156D7E5-22AF-11D3-9F99-00C04F6BC78E}"); // GeoFeature
+		// Layer
+		if (pMap.getLayerCount() == 0) {
+			return null;
+		}
+
+		IEnumLayer pLayers = pMap.getLayers(pID, true);
+		if (pLayers == null)
+			return null;
+
+		pLayers.reset();
+		ILayer pLayer = pLayers.next();
+
+		while (pLayer != null) {
+
+			if (pLayer.getName().equalsIgnoreCase(layerName))
+				return pLayer;
+
+			pLayer = pLayers.next();
+		}
+
+		return null;
+	}
+
+	
+	/**
+	 * Beheen 12/12/13
+	 * Check for existence of a group layer and its containing layers from focus map
+	 * 
+	 * @param app - arcobject application          
+	 * @param comma separated list of group name followed by each layer name
+	 * @return true - if all exists, false otherwise
+	 * @throws IOException
+	 * @throws AutomationException
+	 */
+
+	public static boolean existGroupLayer(IApplication app, String glayerName)
+			throws AutomationException, IOException {
+
+		String names[] = glayerName.split(",");
+		if(names.length == 0)
+			return false;
+		
+		IMxDocument mxDoc = (IMxDocument) app.getDocument();
+		IMap pMap = mxDoc.getFocusMap();
+        
+		UID pID = new UID();
+		pID.setValue("{E156D7E5-22AF-11D3-9F99-00C04F6BC78E}"); // GeoFeature
+		// Layer
+		if (pMap.getLayerCount() == 0) {
+			return false;
+		}
+
+		IEnumLayer pLayers = pMap.getLayers(pID, true);
+		if (pLayers == null)
+			return false;
+
+		pLayers.reset();
+		ILayer pLayer = pLayers.next();
+
+		int cnt = 0;
+		while (pLayer != null) {
+			if(pLayer instanceof GroupLayer) {
+				if (pLayer.getName().equalsIgnoreCase(glayerName)) {
+				    cnt += 1;
+				    ICompositeLayer complyr = new ICompositeLayerProxy(pLayer);
+					int count = complyr.getCount();
+					for (int j = 0; j < count; j++) {
+						ILayer layer = complyr.getLayer(j);
+						for(String n: names) {
+							if(layer.getName().equalsIgnoreCase(n))
+								cnt += 1;
+						}
+					}			
+				}
+			}
+			pLayer = pLayers.next();
+		}
+		if(cnt == names.length)
+			return true;
+        
+		return false;
+	}
+	
+	
+	
+	/**
+	 * Rounds a double value
+	 * 
+	 * @param d
+	 *            - number to round
+	 * @param RoundingPrecision
+	 *            - number of decimal places
+	 * @return rounded value in String
+	 */
+	public static String roundToDecimals(double d) {
+		NumberFormat formatter = new DecimalFormat("#######.###");
+		String f = formatter.format(d);
+		return f;
+	}
+
+	/**
+	 * Rounds a double value
+	 * 
+	 * @param d
+	 *            - number to round
+	 * @param RoundingPrecision
+	 *            - number of decimal places
+	 * @return rounded value in Double
+	 */
+	public static Double roundToDecimalD(double d) {
+		NumberFormat formatter = new DecimalFormat("#######.###");
+		String f = formatter.format(d);
+		return Double.valueOf(f);
+	}
+	
+	/**
+	 * Rounds a double value
+	 * 
+	 * @param d
+	 *            - number to round
+	 * @param layoutRoundingPrecision
+	 *            - number of decimal places
+	 * @return rounded value in double
+	 */
+	public static double roundToDecimals(double d,
+			double layoutRoundingPrecision) {
+		int temp = (int) ((d * Math.pow(10, layoutRoundingPrecision)));
+		return (((double) temp) / Math.pow(10, layoutRoundingPrecision));
+	}
+	
+	
+	/**
+	 * Round up value by 0.5
+	 * @param d
+	 * @return 
+	 */
+	public static double nearestPoint5(double d) {
+		 return Math.ceil(d * 2) / 2;
+	}
+	
+	/**
+	 * Returns the string equivalent of the ESRI map units for label display in
+	 * the user interface. 
+	 * 
+	 * @param inUnit
+	 *            - Map or page units in integer form
+	 * @return the string equivalent of the unit
+	 */
+	public static String getESRIUnit2Str(int inUnit) {
+
+		String outUnits = null;
+		SDEManager sdeRef = SDEManager.getSDEManager(TimsGlobals.app);
+		String region = sdeRef.getActiveRegion();
+		
+		switch (inUnit) {
+		case com.esri.arcgis.system.esriUnits.esriFeet:
+			outUnits = MapLayoutConstants.RELATIVE_FEET;
+			break;
+		case com.esri.arcgis.system.esriUnits.esriMeters:
+			outUnits = MapLayoutConstants.RELATIVE_METER;
+			break;
+		case com.esri.arcgis.system.esriUnits.esriDecimalDegrees:
+			if(region.equalsIgnoreCase(TimsConstants.alsKey) || region.equalsIgnoreCase(TimsConstants.atlKey))
+				outUnits = MapLayoutConstants.RELATIVE_METER;
+			else if(region.equalsIgnoreCase(TimsConstants.gulfKey) || region.equalsIgnoreCase(TimsConstants.pacKey))
+				outUnits = MapLayoutConstants.RELATIVE_FEET;
+			break;
+		default:
+			outUnits = MapLayoutConstants.RELATIVE_NOT_CALCULATED;
+			TimsGlobals.BMLogger.log(Level.WARNING, outUnits);
+			break;
+		}
+		return outUnits;
+	}
+
+	/**
+	 * given the map unit returns page unit by region, if different
+	 * @param mapUnit of type esriUnits
+	 * @return regional expected page unit of type esriUnits
+	 */
+	public static int getPageUnitByRegion(int mapUnit) {
+		
+		System.out.println(file_name + "getPageUnitByRegion() " + "Map unit: " + mapUnit );
+
+		int outUnit = -1;
+		SDEManager sdeRef = SDEManager.getSDEManager(TimsGlobals.app);
+		String region = sdeRef.getActiveRegion();
+
+	
+		switch (mapUnit) {
+			case esriUnits.esriDecimalDegrees:
+				if(region.equalsIgnoreCase(TimsConstants.alsKey) || region.equalsIgnoreCase(TimsConstants.atlKey))
+					outUnit = esriUnits.esriCentimeters;
+				else
+					outUnit = esriUnits.esriInches;
+			break;
+			case esriUnits.esriFeet:
+				if(region.equalsIgnoreCase(TimsConstants.alsKey) || region.equalsIgnoreCase(TimsConstants.atlKey))
+					outUnit = esriUnits.esriCentimeters;
+				else
+					outUnit = esriUnits.esriInches;
+			break;
+			case esriUnits.esriMeters:
+				if(region.equalsIgnoreCase(TimsConstants.alsKey) || region.equalsIgnoreCase(TimsConstants.atlKey))
+					outUnit = esriUnits.esriCentimeters;
+				else
+					outUnit = esriUnits.esriInches;
+			break;	
+		}
+		return outUnit;
+	} // end of method
+	
+
+	/**
+	 * given the map unit returns map unit by region, if different
+	 * @param mapUnit of type esriUnits
+	 * @return regional expected unit of type esriUnits
+	 */
+	public static int getMapUnitByRegion(int mapUnit) {
+		
+		System.out.println(file_name + "getMapUnitByRegion() " + "Map unit: " + mapUnit );
+
+		int outUnit = -1;
+		SDEManager sdeRef = SDEManager.getSDEManager(TimsGlobals.app);
+		String region = sdeRef.getActiveRegion();
+
+	
+		switch (mapUnit) {
+			case esriUnits.esriDecimalDegrees:
+				if(region.equalsIgnoreCase(TimsConstants.alsKey) || region.equalsIgnoreCase(TimsConstants.atlKey))
+					outUnit = esriUnits.esriMeters;
+				else
+					outUnit = esriUnits.esriFeet;
+			break;
+			case esriUnits.esriFeet:
+				if(region.equalsIgnoreCase(TimsConstants.alsKey) || region.equalsIgnoreCase(TimsConstants.atlKey))
+					outUnit = esriUnits.esriMeters;
+				else
+					outUnit = esriUnits.esriFeet;
+			break;
+			case esriUnits.esriMeters:
+				if(region.equalsIgnoreCase(TimsConstants.alsKey) || region.equalsIgnoreCase(TimsConstants.atlKey))
+					outUnit = esriUnits.esriMeters;
+				else
+					outUnit = esriUnits.esriFeet;
+			break;	
+		}
+		return outUnit;
+	} // end of method
+	
+
+	/**
+	 * This method converts a map distance from inUnit to outUnit where outUnit
+	 * and inUnit are of type SR map unit. The function also gives approximated 
+	 * conversion between decimal degrees and a linear unit
+	 * 
+	 * @param dist
+	 *            - a linear measure (i.e. map scale) as defined in esriUnits to
+	 *            be converted from inUnit to outUnit
+	 * @param inUnit
+	 *            - any com.esri.arcgis.system.esriSRUnitType esriSRUnit_Feet
+	 * @param outUnit
+	 *            - any com.esri.arcgis.geometry.esriSRUnitType such as
+	 *            esriSRUnit_Degree
+	 * @return the converted distance.
+	 * 
+	 * @see The scale of a map is defined as the ratio of a distance on the map
+	 *      to the corresponding distance on the ground. If the region of the
+	 *      map is small enough for the curvature of the Earth to be neglected,
+	 *      then the scale may be taken as a constant ratio over the whole map.
+	 *      (A town plan would be an example). For maps covering larger areas,
+	 *      or the whole Earth, it is essential to use a map projection from the
+	 *      sphere (or ellipsoid) to the plane.
+	 * 
+	 */
+
+//	public static double distanceConversion(double dist, int inUnit, int outUnit, int pageUnit) {
+//
+//		System.out.println(file_name + "distanceConversion() " + dist + ", "
+//				+ inUnit + ", " + outUnit);
+//
+//		ISpatialReferenceFactory pSpatRefFact = null;
+//		SDEManager sdeRef = SDEManager.getSDEManager(TimsGlobals.app);
+//		String region = sdeRef.getActiveRegion();
+//		IUnit pUnit = null;
+//		double inFactor = 0.0, outFactor = 0.0, outDist = 0.0;
+//
+//		try {
+//			pSpatRefFact = new SpatialReferenceEnvironment();
+//			
+//			// Beheen 10/9/2012 - if not one of our mapTypes, the map layout
+//			// should be in metric system. If our own type, the transformation
+//			// depends on the region. Gulf and Pacific use US system, Alaska
+//			// and Atlantic use metric.
+//			if (outUnit == com.esri.arcgis.geometry.esriSRUnitType.esriSRUnit_Degree) {
+//				if(region.equalsIgnoreCase(TimsConstants.alsKey) || region.equalsIgnoreCase(TimsConstants.atlKey))
+//					outFactor = TimsConstants.METERS_PER_DEGREE;
+//				else
+//					outFactor = TimsConstants.FEET_PER_DEGREE;
+//			}
+//			else {
+//				pUnit = pSpatRefFact.createUnit((int) outUnit);
+//				if (!(pUnit instanceof ILinearUnit))
+//					outDist = -99999;
+//				else
+//					outFactor = pUnit.getConversionFactor();
+//			}
+//			
+//			
+//			// radians = degrees x pi/180
+//			// radians = s/r, where s equals arc length and r equals radius.
+//			// arc length is s = (radians) times r.
+//			// circle radius of 1 inch and 1 degree angle ==> s = 3.14159 / 180
+//			// * 1 = 0.01745327
+//			// each degree is about 0.0175 inches
+//			// one degree is 111194.8743 meter almost
+//			if (inUnit == esriSRUnitType.esriSRUnit_Degree) {
+//				if(region.equalsIgnoreCase(TimsConstants.alsKey) || region.equalsIgnoreCase(TimsConstants.atlKey))
+//					inFactor = TimsConstants.METERS_PER_DEGREE;
+//				// if Gulf and Pacific, as well as the maps that
+//				// are not ours will be set to feet
+//				else
+//					inFactor = TimsConstants.FEET_PER_DEGREE;
+//			}
+//			else {
+//				pUnit = pSpatRefFact.createUnit((int) inUnit);
+//				if (!(pUnit instanceof ILinearUnit))
+//					outDist = -99999;
+//				else
+//					inFactor = pUnit.getConversionFactor();
+//			}
+//
+//		} catch (UnknownHostException e) {
+//
+//			e.printStackTrace();
+//		} catch (IOException e) {
+//
+//			e.printStackTrace();
+//		}
+//
+//		outDist = dist * inFactor / outFactor;
+//		System.out.println(file_name + "InFactor: " + inFactor
+//				+ ", OutFactor: " + outFactor + ", outDist: " + outDist);
+//		
+//		// distance conversion to page unit 
+//		// here we make assumption that outDist and page unit should
+//		// be from the same unit system (i.e feet/inch - meter/centimeter - 
+//		// At this time the map units have been converted to distance
+//		// unit (outDist) of either meter or feet
+//		//
+//		// if one of our map types, the page unit is read from xml
+//		// file and passed to this method , which is of the expected unit.
+//		
+//		// If not our map types, picks the unit from that map. 
+//		// recall, outDist is in meters if in Alaska and Atlantic regions
+//		// and is in feet other wise. 
+//		// So, here we take this into account to make sure the map and
+//		// page unit are compatible and based on our regional expectation.
+//		
+//		// this method is being used few places. Not all need this part
+//		if(pageUnit==-1)
+//			return outDist;
+//		
+//		switch (pageUnit) {
+//			// this means we have feet distance and we want to make it inches
+//			case com.esri.arcgis.system.esriUnits.esriInches:
+//				if(region.equalsIgnoreCase(TimsConstants.alsKey) || region.equalsIgnoreCase(TimsConstants.atlKey)) {
+//					// if map unit was DD and in this two regions, outDist was changed to metric system
+//					// so change the page unit to metrics too
+//					outDist *= 100.0;
+//				}
+//				else
+//					outDist *= 12.0;
+//			break;
+//				
+//			// this means we have meters and we want to make it centimeter
+//			case com.esri.arcgis.system.esriUnits.esriCentimeters:
+//				if(region.equalsIgnoreCase(TimsConstants.alsKey) || region.equalsIgnoreCase(TimsConstants.atlKey)) {
+//					// if map unit was DD and in this two regions, outDist was changed to metric system
+//					// so change the page unit to metrics too
+//					outDist *= 100.0;
+//				}
+//				else if(region.equalsIgnoreCase(TimsConstants.gulfKey) || region.equalsIgnoreCase(TimsConstants.pacKey)) {
+//					// if map unit was DD and in this two regions, outDist was changed to US system
+//					// so change the page unit to US too
+//					outDist *= 12.0;
+//				}
+//				else
+//					outDist *= 12.0;
+//			break;
+//		}
+//		
+//		System.out.println(file_name + "distanceConversion()..........\n");
+//		return outDist;
+//
+//	} // end of method
+
+	
+	public static double distanceConversion(double dist, int inUnit, int outUnit) {
+
+		System.out.println(file_name + "distanceConversion() " + dist + ", "
+				+ inUnit + ", " + outUnit);
+
+		ISpatialReferenceFactory pSpatRefFact = null;
+		
+		IUnit pUnit = null;
+		double inFactor = 0.0, outFactor = 0.0, outDist = 0.0;
+
+		try {
+			pSpatRefFact = new SpatialReferenceEnvironment();
+		
+			if (outUnit == com.esri.arcgis.geometry.esriSRUnitType.esriSRUnit_Degree) {
+				outFactor = TimsConstants.METERS_PER_DEGREE;
+			}
+			else {
+				pUnit = pSpatRefFact.createUnit((int) outUnit);
+				if (!(pUnit instanceof ILinearUnit))
+					outDist = -99999;
+				else
+					outFactor = pUnit.getConversionFactor();
+			}
+			
+			
+			// radians = degrees x pi/180
+			// radians = s/r, where s equals arc length and r equals radius.
+			// arc length is s = (radians) times r.
+			// circle radius of 1 inch and 1 degree angle ==> s = 3.14159 / 180
+			// * 1 = 0.01745327
+			// each degree is about 0.0175 inches
+			// one degree is 111194.8743 meter almost
+			if (inUnit == esriSRUnitType.esriSRUnit_Degree) {
+				inFactor = TimsConstants.METERS_PER_DEGREE;
+			}
+			else {
+				pUnit = pSpatRefFact.createUnit((int) inUnit);
+				if (!(pUnit instanceof ILinearUnit))
+					outDist = -99999;
+				else
+					inFactor = pUnit.getConversionFactor();
+			}
+
+		} catch (UnknownHostException e) {
+
+			e.printStackTrace();
+		} catch (IOException e) {
+
+			e.printStackTrace();
+		}
+
+		outDist = dist * inFactor / outFactor;
+		System.out.println(file_name + "InFactor: " + inFactor
+				+ ", OutFactor: " + outFactor + ", outDist: " + outDist);
+
+		System.out.println(file_name + "distanceConversion()..........\n");
+		return outDist;
+
+	} // end of method
+	
+	
+	
+	/**
+	 * Finds regional  spatial reference unit
+	 * @param srmapUnit of type esriSRUnitType
+	 * @return regional expected esriSRUnit
+	 */
+	public static int srUnitByRegion(int srmapUnit) {
+		
+		System.out.println(file_name + "srUnitByRegion() " + "SR Map unit: " + srmapUnit );
+
+		int outUnit = -1;
+		SDEManager sdeRef = SDEManager.getSDEManager(TimsGlobals.app);
+		String region = sdeRef.getActiveRegion();
+
+	
+		switch (srmapUnit) {
+			case com.esri.arcgis.geometry.esriSRUnitType.esriSRUnit_Degree:
+				if(region.equalsIgnoreCase(TimsConstants.alsKey) || region.equalsIgnoreCase(TimsConstants.atlKey))
+					outUnit = esriSRUnitType.esriSRUnit_Meter;
+				else
+					outUnit = esriSRUnitType.esriSRUnit_Foot;
+			break;
+			case com.esri.arcgis.geometry.esriSRUnitType.esriSRUnit_Foot:
+				if(region.equalsIgnoreCase(TimsConstants.alsKey) || region.equalsIgnoreCase(TimsConstants.atlKey))
+					outUnit = esriSRUnitType.esriSRUnit_Meter;
+				else
+					outUnit = esriSRUnitType.esriSRUnit_Foot;
+			break;
+			case com.esri.arcgis.geometry.esriSRUnitType.esriSRUnit_Meter:
+				if(region.equalsIgnoreCase(TimsConstants.alsKey) || region.equalsIgnoreCase(TimsConstants.atlKey))
+					outUnit = esriSRUnitType.esriSRUnit_Meter;
+				else
+					outUnit = esriSRUnitType.esriSRUnit_Foot;
+			break;	
+		}
+		return outUnit;
+	} // end of method
+	
+	
+	/**
+	 * Extracts the map projection information from the focus map spatial
+	 * reference.
+	 * 
+	 * @return a string of projection information
+	 */
+	public static String getPrjInfo(IApplication app) {
+
+		System.out.println(file_name + "getPrjInfo()");
+
+		ISpatialReference pSpRef = null;
+		IGeographicCoordinateSystem pGeoCS = null;
+		IProjectedCoordinateSystem pPrjCS = null;
+		String prjName = null;
+		String unitName = null;
+		String spName = null;
+		String spNameD = null;
+		String projectionInfo = null;
+
+		try {
+
+			IMxDocument mxDoc = (IMxDocument) app.getDocument();
+			IMap focusMap = mxDoc.getFocusMap();
+			pSpRef = focusMap.getSpatialReference();
+
+			if (pSpRef instanceof IGeographicCoordinateSystem) {
+				pGeoCS = (IGeographicCoordinateSystem) pSpRef;
+				prjName = pGeoCS.getName();
+				System.out.println(prjName);
+				unitName = pGeoCS.getCoordinateUnit().getName();
+				System.out.println(unitName);
+				spName = pGeoCS.getDatum().getSpheroid().getName();
+				System.out.println(spName);
+			} else if (pSpRef instanceof IProjectedCoordinateSystem) {
+				pPrjCS = (IProjectedCoordinateSystem) pSpRef;
+				prjName = pPrjCS.getName();
+				unitName = pPrjCS.getCoordinateUnit().getName();
+				spName = pPrjCS.getGeographicCoordinateSystem().getDatum()
+						.getSpheroid().getName();
+				spNameD = pPrjCS.getGeographicCoordinateSystem().getDatum()
+				.getName();
+			} else {
+				return null;
+			}
+
+			// do not change this line, it is being used in MapLayoutMenubar
+			projectionInfo = prjName + "|" + unitName + "|" + spName + "|" + spNameD;
+			System.out.println(projectionInfo);
+
+		} catch (AutomationException e) {
+
+			e.printStackTrace();
+		} catch (IOException e) {
+
+			e.printStackTrace();
+		}
+
+		System.out.println(file_name + "getPrjInfo()..........\n");
+		return projectionInfo;
+	}
+
+	/**
+	 * Reads a jar file.
+	 * 
+	 * @param filename
+	 *            .jar
+	 * @return the entire jar file as a string
+	 * @throws IOException
+	 */
+	public static String readFromJARFile(String filename) throws IOException {
+		InputStream is = MiscUtil.class.getResourceAsStream(filename);
+		InputStreamReader isr = new InputStreamReader(is);
+		BufferedReader br = new BufferedReader(isr);
+		StringBuffer sb = new StringBuffer();
+		String line;
+		while ((line = br.readLine()) != null) {
+			sb.append(line);
+		}
+		br.close();
+		isr.close();
+		is.close();
+		return sb.toString();
+	}
+
+	/**
+	 * Unloads the ESRI extensions
+	 */
+	public static void unLoadExtensions() {
+		String msg = file_name + "To be developed!!";
+	}
+
+	/**
+	 * Prints the information about the loaded classes.
+	 */
+	public static void printClassLoader() {
+		// Get the System Classloader
+		ClassLoader sysClassLoader = ClassLoader.getSystemClassLoader();
+
+		// Get the URLs
+		URL[] urls = ((URLClassLoader) sysClassLoader).getURLs();
+
+		for (int i = 0; i < urls.length; i++) {
+			System.out.println(urls[i].getFile());
+		}
+
+	}
+
+	/**
+	 * Test if a file exists or not.
+	 * 
+	 * @param filename
+	 *            to be tested for the existence
+	 * @return
+	 */
+	public static boolean fileExists(String filename) {
+
+		File ini_file = new File(filename);
+		boolean exists = ini_file.exists();
+		if (!exists)
+			return false;
+		else
+			return true;
+
+	}
+
+	/**
+	 * Printing all the connected workspaces in the current applictaion.
+	 * 
+	 * @param hm
+	 *            - a hash map of the workspaces
+	 */
+	public static void printAllWorkspaces(HashMap<String, IWorkspace> hm) {
+		System.out.println(file_name + "printAllWorkspaces()\n");
+
+		Set<Entry<String, IWorkspace>> thisset = hm.entrySet();
+		Iterator<Entry<String, IWorkspace>> itr = thisset.iterator();
+
+		while (itr.hasNext()) {
+
+			Entry<String, IWorkspace> map = itr.next();
+			System.out.println("Key: " + map.getKey() + " => " + "Value: "
+					+ map.getValue());
+		}
+		System.out.println(file_name + "printAllWorkspaces()..........");
+	}
+
+	/**
+	 * Prints a hashmap of <String, List<String>
+	 * 
+	 * @param hm
+	 *            of concern
+	 */
+	public static void printHashMapSL(HashMap<String, List<String>> hm) {
+
+		Set<Entry<String, List<String>>> thisset = hm.entrySet();
+		Iterator<Entry<String, List<String>>> itr = thisset.iterator();
+
+		while (itr.hasNext()) {
+
+			Entry<String, List<String>> map = itr.next();
+			String key = map.getKey();
+
+			List<String> values = new ArrayList<String>();
+			values = map.getValue();
+			Iterator<String> valueIter = values.iterator();
+
+			while (valueIter.hasNext()) {
+				String value = valueIter.next();
+				System.out.println("Key: " + key + " => " + "Value: " + value);
+			}
+
+		}
+
+	}
+
+	/**
+	 * Prints a list of string
+	 * 
+	 * @param li
+	 *            - list of concern
+	 */
+	public static void printSList(List<String> li) {
+
+		Iterator<String> itr = li.iterator();
+		while (itr.hasNext()) {
+			String element = itr.next();
+			System.out.println(element);
+		}
+	}
+
+	/**
+	 * Forces to load the libraries of JAR files.
+	 * 
+	 * @return status (success or fail)
+	 * @throws Exception
+	 */
+	public static int loadJarLib() throws Exception {
+
+		System.out.println(file_name + "Loading libraries()\n");
+
+		String path = System.getProperty(TimsConstants.dataDirKey);
+		System.out.println(path + TimsConstants.libsDirNameKey);
+
+		// Helps load classes and resources from a search path of URLs
+		URLClassLoader sysloader = (URLClassLoader) ClassLoader
+				.getSystemClassLoader();
+		Class<URLClassLoader> sysclass = URLClassLoader.class;
+
+		File folder = new File(path + TimsConstants.libsDirNameKey);
+		System.out.println(folder.getPath());
+
+		if (!folder.exists()) {
+			String msg = file_name + "Error loading libraries!";
+			System.out.println(msg);
+		}
+
+		File[] listOfFiles = folder.listFiles();
+
+		for (int i = 0; i < listOfFiles.length; i++) {
+			if (listOfFiles[i].isFile()) {
+				String jar = folder.getPath() + File.separator
+						+ listOfFiles[i].getName();
+				File jarFile = new File(jar);
+				Method method = sysclass.getDeclaredMethod("addURL",
+						new Class[] { URL.class });
+				method.setAccessible(true);
+				method.invoke(sysloader,
+						new Object[] { jarFile.toURI().toURL() });
+				System.out
+						.println("Loaded library " + listOfFiles[i].getName());
+
+			} else if (listOfFiles[i].isDirectory()) {
+				System.out.println("Directory " + listOfFiles[i].getName());
+			}
+		}
+
+		printClassLoader();
+
+		System.out.println(file_name + "Loading libraries()..........");
+		return TimsConstants.SUCCESS;
+
+	}
+
+	/*
+	 * Prints a ESRI data structure IPropertySet SERVER: 10.20.213.102 INSTANCE:
+	 * 5183 DATABASE: esri_sde_poc83 AUTHENTICATION_MODE: DBMS USER: moghaddb
+	 * PASSWORD: [B@1756456 VERSION: SDE.DEFAULT
+	 */
+
+	public static void printProperty(IPropertySet prop) {
+
+		int properties;
+		try {
+			properties = prop.getCount();
+			Object[] nameArray = new Object[1];
+			Object[] valueArray = new Object[1];
+			prop.getAllProperties(nameArray, valueArray);
+			Object[] names = (Object[]) nameArray[0];
+			Object[] values = (Object[]) valueArray[0];
+			for (int i = 0; i < properties; i++) {
+				String nameString = names[i].toString();
+				String valueString = values[i].toString();
+				System.out.println(nameString + ": " + valueString);
+			}
+
+		} catch (AutomationException e) {
+
+			e.printStackTrace();
+		} catch (IOException e) {
+
+			e.printStackTrace();
+		}
+
+	}
+
+	/**
+	 * Put all "words" in a string into an array.
+	 * 
+	 * @param wordString
+	 * @return array of strings
+	 */
+	// 
+	String[] stringToArray(String wordString) {
+
+		String[] result;
+		int i = 0; // index into the next empty array element
+
+		// --- Declare and create a StringTokenizer
+		StringTokenizer st = new StringTokenizer(wordString);
+
+		// --- Create an array which will hold all the tokens.
+		result = new String[st.countTokens()];
+
+		// --- Loop, getting each of the tokens
+		while (st.hasMoreTokens()) {
+			result[i++] = st.nextToken();
+		}
+
+		return result;
+	}
+
+	/**
+	 * Prints an envelope for testing purposes
+	 * 
+	 * @param env
+	 *            - envelope of a map frame
+	 * 
+	 * @see Envelopes are the rectangular window that contain a specific
+	 *      element. All Geometry objects have an envelope defined by the XMin,
+	 *      YMin, XMax, and YMax of the object. Envelopes can also serve as the
+	 *      viewing area for a particular view screen or data frame.
+	 **/
+	public static void printEnvelope(Envelope env) {
+		System.out.println(file_name + "printEnvelope()\n");
+		try {
+			// print all or none
+			System.out
+					.println("\t Envelope: " + env.getXMin() + ","
+							+ env.getYMin() + "," + env.getXMax() + ","
+							+ env.getYMax());
+		} catch (AutomationException e) {
+
+			e.printStackTrace();
+		} catch (IOException e) {
+
+			e.printStackTrace();
+		}
+		System.out.println(file_name + "printEnvelope()..........");
+	}
+
+	
+	public static Image getImage(String imgName) {
+		
+		BufferedImage img = null;
+
+		try {
+			String imgLocation = "/images/" + imgName;
+			
+			URL imageURL = MiscUtil.class.getResource(imgLocation);
+			if (imageURL != null) {
+				img = ImageIO.read(imageURL);
+				
+			}
+		} catch (IOException e) {}
+
+		return img;
+	}
+	
+	
+	/**
+	 * Creates icons for the menus.
+	 * 
+	 * @param imgLocation
+	 *            is the location of the image in project directory under
+	 *            'images' directory. i.e. /images/ZoomInTool16.png
+	 * @return the icon to the calling program
+	 */
+	public static ImageIcon makeIcon(String imgName) {
+		// Look for the image.
+		String imgLocation = "/images/" + imgName;
+
+		URL imageURL = MiscUtil.class.getResource(imgLocation);
+
+		if (imageURL != null) { // image found
+			return new ImageIcon(imageURL);
+		} else { // no image found
+			String msg = TimsConstants.RESOURCE_NOT_FOUND + imgLocation;
+			System.out.println(file_name + msg);
+		}
+		return null;
+	}
+
+	
+	/**
+	 * Given a feature class name returns the feature layer.
+	 * @param featureClsName - name of the feature class (i.e. TIMSTABS.BOREHOLES_SDE_VIEW)
+	 * @param alias name for the layer. 
+	 * @return feature layer or null if feature layer is not
+	 * found in the active workspace.
+	 * @throws IOException 
+	 * @throws AutomationException 
+	 */
+	
+	public static boolean addLayerFromDB2Map(String featureClsName, String alias) throws AutomationException, IOException {
+		
+		if(getFeatureLayer(TimsGlobals.app, alias) != null)
+			return true;
+		
+		SDEManager sdeMgr = SDEManager.getSDEManager(TimsGlobals.app);
+		IFeatureWorkspace ws = sdeMgr.getFeatureWorkspace();
+		IFeatureClass fc = ws.openFeatureClass(featureClsName);
+		if(fc != null) {
+			IFeatureLayer fLayer = new FeatureLayer();
+			fLayer.setName(alias);
+			fLayer.setFeatureClassByRef(fc);
+			IMxDocument mxDoc = (IMxDocument) TimsGlobals.app.getDocument();
+			mxDoc.getFocusMap().addLayer(fLayer);
+			mxDoc.getActiveView().partialRefresh(esriViewDrawPhase.esriViewGraphics,null, null);
+			return true;
+		}
+	
+		return false;
+	}
+	
+
+	/**
+	 * Given a group name (alias) and list of feature class name constructs and adds
+	 * the group layer to the focus map. 
+	 * @param featureClsNames - comma separated name of the feature classes 
+	 *                          (i.e. TIMSTABS.BOREHOLES_SDE_VIEW)
+	 * @param alias name for the group layer. 
+	 * @returns true if glayer already exists or successfully created group 
+	 *          layer and added to the focus map, return false otherwise
+	 * @throws IOException 
+	 * @throws AutomationException 
+	 */
+	
+	public static boolean addGroupLayerFromDB2Map(String featureClsNames, String alias)  {
+		
+		String gpack = null;
+		if(featureClsNames.isEmpty() || alias.isEmpty())
+			return false;
+		else {
+			gpack = alias + "," + featureClsNames;
+		}
+		
+		String fcls[] = featureClsNames.split(",");
+		
+		SDEManager sdeMgr = SDEManager.getSDEManager(TimsGlobals.app);
+	
+		try {
+			if( existGroupLayer (TimsGlobals.app, gpack))
+				return true;
+		
+			GroupLayer gLayer = new GroupLayer();
+			gLayer.setName(alias);
+			
+			IFeatureWorkspace ws = sdeMgr.getFeatureWorkspace();
+			
+			for(String name : fcls) {
+				IFeatureClass fc = ws.openFeatureClass(name);
+				
+				if(fc != null) {
+					IFeatureLayer fLayer = new FeatureLayer();
+					fLayer.setName(fc.getAliasName());
+					fLayer.setFeatureClassByRef(fc);
+					gLayer.add(fLayer);
+				}
+			}
+			
+			IMxDocument mxDoc = (IMxDocument) TimsGlobals.app.getDocument();
+			mxDoc.getFocusMap().addLayer(gLayer);
+			mxDoc.getActiveView().partialRefresh(esriViewDrawPhase.esriViewGraphics,null, null);
+			
+			return true;
+			
+		} catch (AutomationException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+			return false;
+		} catch (IOException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+			return false;
+		} 
+		
+	}
+	
+	
+	
+	/**
+	 * Creates a workspace in the memory
+	 * 
+	 * @return the workspace
+	 * @throws IOException
+	 * @throws UnknownHostException
+	 */
+	public static IWorkspace createInMemoryWorkspace()
+			throws UnknownHostException, IOException {
+		// Create an InMemory workspace factory.
+		IWorkspaceFactory workspaceFactory = new InMemoryWorkspaceFactory();
+
+		// Create an InMemory geodatabase.
+		IWorkspaceName workspaceName = workspaceFactory.create("",
+				"MyWorkspace", null, 0);
+
+		// Cast for IName.
+		IName name = (IName) workspaceName;
+
+		// Open a reference to the InMemory workspace through the name object.
+		IWorkspace workspace = (IWorkspace) name.open();
+		return workspace;
+	}
+
+	/**
+	 * This method allows a message to be called when a custom tool is selected.
+	 * It contains a workaround to get around an esri bug that causes ArcMap to
+	 * freeze when a dialog is clicked while over the map and while a custom
+	 * tool is enabled.
+	 * 
+	 * @param p_Message
+	 *            - The message to show in the dialog
+	 * @param p_DialogType
+	 *            - A constant from JOptionPane. Either ERROR_MESSAGE,
+	 *            INFORMATION_MESSAGE, PLAIN_MESSAGE, or QUESTION_MESSAGE.
+	 */
+	public static void displayMessage(String p_Message, int p_DialogType,
+			String p_Title) {
+
+		final String msg = p_Message;
+		final int type = p_DialogType;
+		final String title = p_Title;
+		
+		Runnable r = new Runnable() {
+			public void run() {
+				ICommandItem currentTool = null;
+				try {
+					// get the current tool for later
+					currentTool = TimsGlobals.app.getCurrentTool();
+							
+					// deselect the custom tool to work around an esri bug with
+					// dialogs and custom tools
+					if(TimsGlobals.app.getCurrentTool() != null) {
+						currentTool = TimsGlobals.app.getCurrentTool();
+						TimsGlobals.app.setCurrentToolByRef(null);
+					}
+					
+					// show the message dialog
+					String title1 = title;
+					if (type == JOptionPane.ERROR_MESSAGE)
+						title1 = TimsConstants.ERROR_DIALOG_TITLE;
+					else if (type == JOptionPane.WARNING_MESSAGE)
+						title1 = TimsConstants.WARNING_DIALOG_TITLE;
+					else if (type == JOptionPane.INFORMATION_MESSAGE)
+						title1 = TimsConstants.INFO_DIALOG_TITLE;
+
+					JOptionPane.showMessageDialog(null, msg, title1, type);	
+					
+					if(currentTool != null)
+						TimsGlobals.app.setCurrentToolByRef(currentTool);
+					
+				} catch (Exception e1) {
+					e1.printStackTrace();
+					//JOptionPane.showMessageDialog(null, e1.getMessage() + " - Try again.");	
+					
+					try {
+						System.out.println(TimsGlobals.app.getCurrentTool());
+					} catch (AutomationException e2) {
+						// TODO Auto-generated catch block
+						e1.printStackTrace();
+					} catch (IOException e2) {
+						// TODO Auto-generated catch block
+						e1.printStackTrace();
+					}
+				} finally {
+					// re-select this tool after the dialog has been closed
+					try {
+						if(currentTool != null)
+							TimsGlobals.app.setCurrentToolByRef(currentTool);
+					} catch (Exception e) {
+						e.printStackTrace();
+						
+							try {
+								System.out.println(TimsGlobals.app.getCurrentTool());
+							} catch (AutomationException e1) {
+								// TODO Auto-generated catch block
+								e1.printStackTrace();
+							} catch (IOException e1) {
+								// TODO Auto-generated catch block
+								e1.printStackTrace();
+							}
+						
+					}
+				}
+				
+			}
+		};
+		java.awt.EventQueue.invokeLater(r);
+	}
+
+
+	/**
+	 * Toggles the active view to page if it is map and otherwise.
+	 * @throws AutomationException
+	 * @throws IOException
+	 */
+	public static void toggleActiveView() throws AutomationException, IOException {
+		IMxDocument mxDoc = (IMxDocument) TimsGlobals.app.getDocument();
+		IActiveView activeView =  mxDoc.getActiveView();
+		if (activeView instanceof IMap) {
+			mxDoc.setActiveViewByRef((IActiveView)mxDoc.getPageLayout());
+		}
+		
+		
+		else if (activeView instanceof IPageLayout) {
+			mxDoc.setActiveViewByRef((IActiveView)mxDoc.getFocusMap());
+		}
+		
+		mxDoc.getActiveView().refresh();
+	}
+	
+	
+
+	
+	/**
+	 * This method prints message on the screen during debugging.
+	 * 
+	 * @param message
+	 *            - the file name where the message is originated followed by
+	 *            the content of the message
+	 */
+	public static void onScreenMessage(String message) {
+		System.out.println("\n" + message);
+	}
+
+	
+	
+	/**
+	 * 
+	 * @param propApp
+	 * @param prop
+	 * @return
+	 */
+	public static boolean compareConnectionProperty(IPropertySet propApp, IPropertySet prop) {
+		
+		try {
+
+//			MiscUtil.printSDEConnectionPropertySet(propApp);
+//			System.out.println("\n");
+//			MiscUtil.printSDEConnectionPropertySet(prop);
+			
+			if (propApp.getProperty(TimsConstants.serverKey).equals(prop.getProperty(TimsConstants.serverKey)) &&
+					//propApp.getProperty(TimsConstants.aliasKey).equals(prop.getProperty(TimsConstants.aliasKey)))&& 
+				propApp.getProperty(TimsConstants.instanceKey).equals(prop.getProperty(TimsConstants.instanceKey))) {
+				return true;
+			}
+			else
+				return false;
+
+		} catch (AutomationException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+			return false;
+		} catch (IOException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+			return false;
+		}
+	}
+	
+	public static void printSDEConnectionPropertySet(IPropertySet prop) {
+		if(TimsConstants.DEBUG) {
+			
+			try {
+				System.out.println(prop.getProperty(TimsConstants.userKey));
+			} catch (AutomationException e) {
+				// TODO Auto-generated catch block
+				System.out.println("USER property doesn't exist");
+			} catch (IOException e) {
+				// TODO Auto-generated catch block
+				System.out.println("USER property doesn't exist");
+			}
+			try {
+				if(prop.getProperty(TimsConstants.passKey) == null)
+					System.out.println("null");
+				else
+					System.out.println("Password is good!!");
+			} catch (AutomationException e) {
+				// TODO Auto-generated catch block
+				System.out.println("PASSWORD property doesn't exist");
+			} catch (IOException e) {
+				// TODO Auto-generated catch block
+				System.out.println("PASSWORD property doesn't exist");
+			}
+			try {
+				System.out.println(prop.getProperty(TimsConstants.databaseKey));
+			} catch (AutomationException e) {
+				// TODO Auto-generated catch block
+				System.out.println("DATABASE property doesn't exist");
+			} catch (IOException e) {
+				// TODO Auto-generated catch block
+				System.out.println("DATABASE property doesn't exist");
+			}
+			try {
+				System.out.println(prop.getProperty(TimsConstants.serverKey));
+			} catch (AutomationException e) {
+				// TODO Auto-generated catch block
+				System.out.println("SERVER property doesn't exist");
+			} catch (IOException e) {
+				// TODO Auto-generated catch block
+				System.out.println("SERVER property doesn't exist");
+			}
+			try {
+				System.out.println(prop.getProperty(TimsConstants.instanceKey));
+			} catch (AutomationException e) {
+				// TODO Auto-generated catch block
+				System.out.println("INSTANCE property doesn't exist");
+			} catch (IOException e) {
+				// TODO Auto-generated catch block
+				System.out.println("INSTANCE property doesn't exist");
+			}
+			try {
+				System.out.println(prop.getProperty(TimsConstants.authenKey));
+			} catch (AutomationException e) {
+				// TODO Auto-generated catch block
+				System.out.println("AUTHENTICATION_MODE property doesn't exist");
+			} catch (IOException e) {
+				// TODO Auto-generated catch block
+				System.out.println("AUTHENTICATION_MODE property doesn't exist");
+			}
+			try {
+				System.out.println(prop.getProperty(TimsConstants.versionKey));
+			} catch (AutomationException e) {
+				// TODO Auto-generated catch block
+				System.out.println("VERSION property doesn't exist");
+			} catch (IOException e) {
+				// TODO Auto-generated catch block
+				System.out.println("VERSION property doesn't exist");
+			}
+		}
+	}
+	
+	
+	/**
+	 * Copy Files from one location to other using stream.
+	 */
+	public static void copyFileUsingStream(File source, File dest) throws IOException {
+	    FileInputStream is = null;
+	    FileOutputStream os = null;
+	    try {
+	        is = new FileInputStream(source);
+	        os = new FileOutputStream(dest);
+	        byte[] buffer = new byte[1024];
+	        int length;
+	        while ((length = is.read(buffer)) > 0) {
+	            os.write(buffer, 0, length);
+	        }
+	    } finally {
+	        is.close();
+	        os.close();
+	    }
+	}
+	
+	
+	/**
+	 * 
+	 * Delete features from the target featureclass 
+	 * 
+	 */
+	public static void deleteRows(IFeatureClass targetFeatureClass,IQueryFilter queryFilter ) {
+		try {
+			System.out.println("... deleting Rows");
+			// Use IFeatureClass.Update to populate IFeatureCursor.
+			IFeatureCursor updateCursor = targetFeatureClass.IFeatureClass_update(queryFilter, false);
+			IFeature feature = null;
+			while ((feature = updateCursor.nextFeature()) != null) {
+				updateCursor.deleteFeature();
+			}
+
+			// If the cursor is no longer needed, release it.
+			Cleaner.release(updateCursor);
+			Cleaner.release(targetFeatureClass);
+		} catch (Exception e) {
+			System.out.println(e.getMessage());
+			e.printStackTrace();
+			//JOptionPane.showMessageDialog(null, e.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
+		}
+
+	}
+
+	/**
+	 * get the specified String value from the feature returning an
+	 * empty string if null
+	 * 
+	 * @param row - IRow is a superinterface of IFeature
+	 * @param index
+	 * @return String
+	 * @author ddoll
+	 */
+	public static String getStringValue(IRow row, int index){
+
+		try {
+			if (row.getValue(index) == null)
+				return  "" ;
+			else
+				return row.getValue(index).toString() ;
+		} catch (IOException e) {
+			TimsGlobals.BMLogger.log(Level.INFO, "MiscUtil.getStringValue: Failed to get string for " + index, e);
+			return "" ;
+		}
+	}// end method
+
+	public static String getStringValue(ResultSet resultSet, String fieldName) {
+		try {
+			return resultSet.getString(fieldName) ;
+		} catch (SQLException e) {
+			TimsGlobals.BMLogger.log(Level.INFO, "MiscUtil.getStringValue: Failed to get string for " + fieldName, e);
+			return "" ;
+		}
+	}// end method
+
+	/**
+	 * get the specified date value as a String formatted as MM/DD/YYYY from 
+	 * the feature returning an empty string if null
+	 * 
+	 * @param row - IRow is a superinterface of IFeature
+	 * @param index
+	 * @return String
+	 * @author ddoll
+	 */
+	public static String getDateValue(IRow row, int index){
+		try {
+			if (row.getValue(index) == null)
+				return "" ;
+			else
+				return String.format("%tm/%<td/%<tY", (Date)row.getValue(index)) ;
+		} catch (IOException e) {
+			return "" ;
+		}
+	}//end getDateValue
+	/**
+	 * <p>
+	 * The getLineCount method reads the input file to determine the number of rows.
+	 * </p> 
+	 */
+	public static int getLineCount(String fileName){
+		int lines = 0;
+		try (BufferedReader reader = new BufferedReader(new FileReader(fileName));){
+			@SuppressWarnings("unused")
+			String line ;
+			while ((line = reader.readLine()) != null) lines++;
+		} catch (IOException e) {
+			TimsGlobals.BMLogger.log(Level.WARNING, "Error getting line count", e);
+			lines = 0 ;
+		}
+		return lines ;
+
+	}// end getLineCount
+	
+	private static final Pattern DOUBLE_PATTERN = Pattern.compile(
+			"[\\x00-\\x20]*[+-]?(NaN|Infinity|((((\\p{Digit}+)(\\.)?((\\p{Digit}+)?)" +
+					"([eE][+-]?(\\p{Digit}+))?)|(\\.((\\p{Digit}+))([eE][+-]?(\\p{Digit}+))?)|" +
+					"(((0[xX](\\p{XDigit}+)(\\.)?)|(0[xX](\\p{XDigit}+)?(\\.)(\\p{XDigit}+)))" +
+			"[pP][+-]?(\\p{Digit}+)))[fFdD]?))[\\x00-\\x20]*");
+	public static boolean isDouble(String s){return DOUBLE_PATTERN.matcher(s).matches();}
+
+	public static boolean isInt(String s){return s.matches("^[-+]?\\d+") ;}
+	
+	public static String getRegionCode() {
+		String region = WordUtils.capitalize(SDEManager.activeRegion.toLowerCase()) ;
+		String regionCode = TimsConstants.REGION_CODE_MAP.get(region);
+		return regionCode ;
+	}// end method
+	
+	
+	/***
+	 * Center a string given the width
+	 * @param text
+	 * @param width
+	 * @return
+	 */
+    public static String centerString(String text, int width) {
+        return centerString(text, width, ' ');
+    }// end method
+
+    /***
+     * 
+	 * Center a string given the width and a pad character
+     * @param text
+     * @param width
+     * @param padCharacter
+     * @return
+     */
+    public static String centerString(String text, int width, char padCharacter) {
+        if (text == null || width <= text.length())
+            return text;
+
+        StringBuilder sb = new StringBuilder(width);
+        for (int i = 0; i < (width - text.length()) / 2; i++) {
+            sb.append(padCharacter);
         }
-
-        /// <summary>
-        /// Removes existing overview elements from the layout.
-        /// </summary>
-        private static void RemoveExistingOverviewElements(Layout layout)
-        {
-            try
-            {
-                var overviewFrame = layout.FindElement(OverviewMapFrameName);
-                if (overviewFrame != null)
-                {
-                    layout.DeleteElement(overviewFrame);
-                }
-
-                var highlightElement = layout.FindElement(ExtentHighlightName);
-                if (highlightElement != null)
-                {
-                    layout.DeleteElement(highlightElement);
-                }
-            }
-            catch
-            {
-                // Ignore errors when removing
-            }
+        sb.append(text);
+        while (sb.length() < width) {
+            sb.append(padCharacter);
         }
-
-        /// <summary>
-        /// Sets the overview map frame extent with buffer.
-        /// </summary>
-        private static void SetOverviewExtent(MapFrame overviewFrame, Envelope mainMapExtent)
-        {
-            try
-            {
-                // Calculate buffered extent (2x the main extent)
-                double centerX = (mainMapExtent.XMin + mainMapExtent.XMax) / 2.0;
-                double centerY = (mainMapExtent.YMin + mainMapExtent.YMax) / 2.0;
-                double halfWidth = mainMapExtent.Width * ExtentBufferFactor / 2.0;
-                double halfHeight = mainMapExtent.Height * ExtentBufferFactor / 2.0;
-
-                var bufferedExtent = EnvelopeBuilderEx.CreateEnvelope(
-                    new Coordinate2D(centerX - halfWidth, centerY - halfHeight),
-                    new Coordinate2D(centerX + halfWidth, centerY + halfHeight),
-                    mainMapExtent.SpatialReference);
-                //var layout = LayoutView.Active?.Layout;
-                // Set the camera to show the buffered extent
-                var camera = overviewFrame.GetMapView(LayoutView.Active)?.Camera;
-                if (camera != null)
-                {
-                    camera.X = centerX;
-                    camera.Y = centerY;
-                    // Scale is adjusted based on the buffer factor
-                    camera.Scale *= ExtentBufferFactor;
-                }
-
-                overviewFrame.SetCamera(bufferedExtent);
-            }
-            catch
-            {
-                // Continue without setting extent if it fails
-            }
-        }
-
-        /// <summary>
-        /// Adds a highlight rectangle showing the main map extent in the overview.
-        /// </summary>
-        private static void AddExtentHighlight(
-            Layout layout, 
-            MapFrame overviewFrame, 
-            Envelope mainMapExtent,
-            Envelope overviewEnvelope)
-        {
-            try
-            {
-                // Create a simple red rectangle to highlight the main extent
-                // This is an approximation - in a full implementation, this would
-                // transform map coordinates to layout coordinates
-
-                // Calculate approximate position of main extent within overview frame
-                double overviewWidth = overviewEnvelope.Width;
-                double overviewHeight = overviewEnvelope.Height;
-
-                // The highlight should be centered and sized relative to the buffer factor
-                // Since buffer is 2x, the highlight should be about 1/2 the overview size
-                double highlightWidth = overviewWidth / ExtentBufferFactor;
-                double highlightHeight = overviewHeight / ExtentBufferFactor;
-
-                double highlightCenterX = (overviewEnvelope.XMin + overviewEnvelope.XMax) / 2.0;
-                double highlightCenterY = (overviewEnvelope.YMin + overviewEnvelope.YMax) / 2.0;
-
-                var highlightEnvelope = EnvelopeBuilderEx.CreateEnvelope(
-                    new Coordinate2D(highlightCenterX - highlightWidth / 2.0, highlightCenterY - highlightHeight / 2.0),
-                    new Coordinate2D(highlightCenterX + highlightWidth / 2.0, highlightCenterY + highlightHeight / 2.0));
-
-                // Create red outline symbol with transparent fill for extent highlight
-                var outlineSymbol = SymbolFactory.Instance.ConstructPolygonSymbol(
-                    ColorFactory.Instance.CreateRGBColor(HighlightRed, HighlightGreen, HighlightBlue, TransparentAlpha),
-                    SimpleFillStyle.Null,
-                    SymbolFactory.Instance.ConstructStroke(
-                        ColorFactory.Instance.CreateRGBColor(HighlightRed, HighlightGreen, HighlightBlue),
-                        HighlightStrokeWidth, 
-                        SimpleLineStyle.Solid));
-
-                ElementFactory.Instance.CreateGraphicElement(
-                    layout,
-                    highlightEnvelope,
-                    outlineSymbol,
-                    ExtentHighlightName);
-            }
-            catch
-            {
-                // Continue without highlight if it fails
-            }
-        }
-
-        /// <summary>
-        /// Calculates the adjusted main map frame height to avoid overlap with the overview.
-        /// </summary>
-        /// <param name="originalMapHeight">The original map frame height.</param>
-        /// <param name="overviewHeight">The overview frame height.</param>
-        /// <param name="hasOverview">Whether an overview is included.</param>
-        /// <param name="gap">Gap between map and overview.</param>
-        /// <returns>The adjusted map frame height.</returns>
-        public static double GetAdjustedMapHeight(
-            double originalMapHeight, 
-            double overviewHeight,
-            bool hasOverview,
-            double gap = 0.2)
-        {
-            if (!hasOverview)
-                return originalMapHeight;
-
-            // If the overview would overlap with the map frame top area,
-            // reduce the map frame height
-            double reduction = overviewHeight + gap;
-            return Math.Max(originalMapHeight - reduction, originalMapHeight * 0.5);
-        }
-    }
+        return sb.toString();
+    }// end method
+	
 }
